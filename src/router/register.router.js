@@ -26,7 +26,7 @@ router.route("/step3").post(
   authMiddleware,
   multermiddleware.fields([
     { name: "userImage", maxCount: 1 },
-    { name: "khatauniImg", maxCount: 1 },
+    { name: "khatauni_images[]", maxCount: 20 },
     { name: "aadhaarImg", maxCount: 1 },
     { name: "panImg", maxCount: 1 },
   ]),

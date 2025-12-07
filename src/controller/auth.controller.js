@@ -1,6 +1,10 @@
+import Farmer from "../model/Farmer.model.js";
+import Employee from "../model/Employee.model.js";
 import User from "../model/Users.model.js";
-import { decryptPassword } from "../utils/bcrypt.js";
+import OTP from "../model/Otp.model.js";
+import { decryptPassword, encryptPassword } from "../utils/bcrypt.js";
 import { generateToken, verifyToken } from "../utils/jwt.js";
+import { sendEmailOTP } from "../utils/miscellaneous.js";
 
 const login = async (req, res) => {
   const { email, password, phone_number } = req.body;
@@ -33,7 +37,6 @@ const login = async (req, res) => {
   }
 };
 
-
 const checkToken = async (req, res, next) => {
   try {
     const authHeader = req.headers["authorization"];
@@ -47,15 +50,17 @@ const checkToken = async (req, res, next) => {
 
     // Verify token
     const isTokenValid = verifyToken(token);
-    const userId =isTokenValid.userId;
+    const userId = isTokenValid.userId;
 
-    const user=await User.findOne({_id:userId});
+    const user = await User.findOne({ _id: userId });
 
     if (!user) {
       return res.status(401).json({ success: false, message: "Invalid token" });
     }
 
-    return res.status(200).json({ success: true, message: "Token is valid",role:user.role });
+    return res
+      .status(200)
+      .json({ success: true, message: "Token is valid", role: user.role });
   } catch (error) {
     console.error("Token check error:", error);
     return res
@@ -72,7 +77,9 @@ const pinVerification = async (req, res) => {
     const user = await User.findById(userId);
 
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const isValidPin = await decryptPassword(pin, user.account_pin);
@@ -93,15 +100,157 @@ const pinVerification = async (req, res) => {
 const getProfile = async (req, res) => {
   try {
     const userId = req.user.userId;
-    const user = await User.findById(userId).select("name phone_number email role user_image isVerified userId");
-    return res.status(200).json({ profile: user });
+
+    // Fetch basic user details
+    const user = await User.findById(userId).select(
+      "name phone_number email role isVerified"
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    let profileExtra = null;
+
+    // If user is a farmer, fetch from Farmer model
+    if (user.role === "farmer") {
+      profileExtra = await Farmer.findOne({ user: userId }).select(
+        "user_image farmerId"
+      );
+    }
+
+    // If user is admin, manager, or supervisor, fetch from Employee model
+    if (["admin", "manager", "supervisor"].includes(user.role)) {
+      const employeeData = await Employee.findOne({ user: userId }).select(
+        "employeeImage employeeId"
+      );
+      if (employeeData) {
+        profileExtra = {
+          user_image: employeeData.employeeImage,
+          employeeId: employeeData.employeeId
+        };
+      }
+    }
+
+    const profile = {
+      ...user.toObject(),
+      ...(profileExtra ? (profileExtra.toObject ? profileExtra.toObject() : profileExtra) : {}),
+    };
+
+    return res.status(200).json({ profile });
   } catch (error) {
     console.error("Error fetching user profile:", error);
-    return res
-      .status(500)
-      .json({  message: "Internal server error" });
+    return res.status(500).json({ message: "Internal server error" });
   }
 };
 
+// send OTP
+const sendOTP = async (req, res) => {
+  try {
+    const { email, phone_number } = req.body;
 
-export { login, checkToken, getProfile,pinVerification };
+    const user = await User.findOne({
+      $or: [{ email }, { phone_number }],
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const otpSend = await sendEmailOTP(email);
+
+    if (!otpSend) {
+      return res.status(500).json({ message: "Failed to send OTP" });
+    }
+
+    return res.status(200).json({ message: "OTP sent successfully" });
+  } catch (error) {
+    console.error("Error sending OTP:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// verify OTP
+const verifyOTP = async (req, res) => {
+  try {
+    const { email , phone, otp } = req.body;
+
+    const otpRecord=await OTP.findOne(
+      { $and: [{ email:email }, { phone_number:phone }] }
+    );
+
+    if (!otpRecord) {
+      return res.status(404).json({ message: "OTP not found" });
+    }
+
+    if (otpRecord.otp !== otp) {
+      return res.status(401).json({ message: "Invalid OTP" });
+    }
+
+    await OTP.deleteOne({ _id: otpRecord._id });
+
+    return res.status(200).json({ message: "OTP verified successfully" });
+  } catch (error) {
+    console.error("Error verifying OTP:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// reset password
+const resetPassword = async (req, res) => {
+  try {
+    const { email, phone_number, newPassword } = req.body;
+
+    const user = await User.findOne({
+      $and: [{ email }, { phone_number }],
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.password = await encryptPassword(newPassword);
+    await user.save();
+
+    return res
+      .status(200)
+      .json({ message: `Password reset for ${email} successfully` });
+  } catch (error) {
+    console.error("Error resetting password:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// reset pin
+const resetPin = async (req, res) => {
+  try {
+    const { email, phone_number, newPin } = req.body;
+
+    const user = await User.findOne({
+      $and: [{ email }, { phone_number }],
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.account_pin = await encryptPassword(newPin);
+    await user.save();
+
+    return res.status(200).json({ message: "PIN updated successfully" });
+  } catch (error) {
+    console.error("Error resetting pin:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export {
+  login,
+  checkToken,
+  pinVerification,
+  getProfile,
+  sendOTP,
+  verifyOTP,
+  resetPassword,
+  resetPin,
+};

@@ -22,6 +22,7 @@ const storageBucketSchema = new Schema({
         transaction_id: { type: mongoose.Schema.Types.ObjectId, ref: "TransactionHistory" },
         created_at: { type: Date, default: Date.now },
       }],
+      pending_quantity: { type: Number, default: 0 },
       total_quantity: { type: Number, default: 0 },
     },
   ],

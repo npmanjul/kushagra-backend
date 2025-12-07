@@ -7,9 +7,11 @@ const storage = multer.diskStorage({
     cb(null, path.resolve("uploads/"));
   },
   filename: function (req, file, cb) {
+    // FIX: Remove [] from fieldname to avoid ENOENT
+    const safeFieldname = file.fieldname.replace(/\[\]/g, "");
     cb(
       null,
-      file.fieldname + "-" + Date.now() + path.extname(file.originalname)
+      safeFieldname + "-" + Date.now() + path.extname(file.originalname)
     );
   },
 });
@@ -27,4 +29,15 @@ function fileFilter(req, file, cb) {
 }
 
 const upload = multer({ storage, fileFilter });
+
+export const uploadMultiple = multer({
+  storage,
+  fileFilter,
+}).fields([
+  { name: "userImage", maxCount: 1 },
+  { name: "aadhaarImg", maxCount: 1 },
+  { name: "panImg", maxCount: 1 },
+  { name: "khatauni_images[]", maxCount: 20 },
+]);
+
 export default upload;

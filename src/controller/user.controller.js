@@ -2,6 +2,7 @@ import TransactionHistory from "../model/Transaction.model.js";
 import StorageBucket from "../model/StorageBucket.model.js";
 import GrainCategories from "../model/GrainCategories.model.js";
 import User from "../model/Users.model.js";
+import FarmerProfiles from "../model/Farmer.model.js";
 
 const dashboardAnalytics = async (req, res) => {
   try {
@@ -153,16 +154,46 @@ const getAllGrainDeposite = async (req, res) => {
   try {
     const userId = req.user?.userId;
 
+
     if (!userId) {
       return res.status(400).json({ message: "User ID is required" });
     }
 
-    // Fetch user's grain buckets
-    const userGrains = await StorageBucket.find({ bucket_owner_id: userId }).lean();
+    const user = await User.findOne({ _id: userId });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const user_role = user.role;
+
+    // Allowed roles to access this endpoint
+    const allowedRoles = ["farmer", "supervisor", "manager", "admin"];
+    if (!allowedRoles.includes(user_role)) {
+      return res.status(403).json({
+        message:
+          "Only farmers, supervisors, managers or admins can access grain deposits",
+      });
+    }
+
+    // Determine which farmerId to use:
+    // - If the requester is a farmer: use their own userId
+    // - If the requester is supervisor/manager/admin: use req.query.farmerId
+    let farmerId;
+    if (user_role === "farmer") {
+      farmerId = userId;
+    } else {
+      farmerId = req.query.farmerId;
+      if (!farmerId) {
+        return res.status(400).json({ message: "Farmer ID is required" });
+      }
+    }
+
+    // Fetch farmer's grain buckets
+    const userGrains = await StorageBucket.find({ bucket_owner_id: farmerId }).lean();
 
     if (!userGrains.length) {
       return res.status(200).json({
-        message: "No grain data found for this user",
+        message: "No grain data found for this farmer",
         deposits: [],
       });
     }
@@ -185,7 +216,7 @@ const getAllGrainDeposite = async (req, res) => {
     const todayPriceMap = {};
     categoriesDetails.forEach((grain) => {
       const { _id, grain_type, quality, price_history } = grain;
-      if (!price_history.length) return;
+      if (!price_history || !price_history.length) return;
       const latestPrice = price_history[price_history.length - 1];
       todayPriceMap[_id.toString()] = {
         grain_type,
@@ -197,24 +228,29 @@ const getAllGrainDeposite = async (req, res) => {
     });
 
     // Map deposits with today's price
-    const deposits = categories.map((cat) => {
-      const catPriceInfo = todayPriceMap[cat.category_id.toString()] || {};
-      let todayPricePerQtl = 0;
-      if (catPriceInfo.quality === "A") todayPricePerQtl = catPriceInfo.max || 0;
-      else if (catPriceInfo.quality === "B") todayPricePerQtl = catPriceInfo.avg || 0;
-      else if (catPriceInfo.quality === "C") todayPricePerQtl = catPriceInfo.min || 0;
+    const deposits = categories
+      .map((cat) => {
+        const catPriceInfo = todayPriceMap[cat.category_id.toString()] || {};
+        let todayPricePerQtl = 0;
+        if (catPriceInfo.quality === "A") todayPricePerQtl = catPriceInfo.max || 0;
+        else if (catPriceInfo.quality === "B") todayPricePerQtl = catPriceInfo.avg || 0;
+        else if (catPriceInfo.quality === "C") todayPricePerQtl = catPriceInfo.min || 0;
 
-      return {
-        category_id: cat.category_id,
-        total_quantity: cat.total_quantity,
-        grain_type: catPriceInfo.grain_type || null,
-        quality: catPriceInfo.quality || null,
-        today_price_per_quintal: todayPricePerQtl,
-        total_value: (cat.total_quantity || 0) * todayPricePerQtl,
-      };
+        return {
+          category_id: cat.category_id,
+          total_quantity: cat.total_quantity,
+          grain_type: catPriceInfo.grain_type || null,
+          quality: catPriceInfo.quality || null,
+          today_price_per_quintal: todayPricePerQtl,
+          total_value: (cat.total_quantity || 0) * todayPricePerQtl,
+        };
+      })
+      .filter((item) => item.total_quantity > 0);
+
+    return res.status(200).json({
+      message: "Grain deposits fetched successfully",
+      deposits,
     });
-
-    return res.status(200).json({ message: "Grain deposits fetched successfully", deposits });
   } catch (error) {
     console.error("Error fetching grain deposits:", error);
     return res.status(500).json({ message: "Internal server error" });
@@ -304,39 +340,80 @@ const categoryTransactionDetails = async (req, res) => {
 
 const findUserDetails = async (req, res) => {
   try {
-    let { name, email, phone_number, userId } = req.query; // get from query params
+    let { name, email, phone_number } = req.query;
 
-    if (!name && !email && !phone_number && !userId) {
+    // At least one search parameter required
+    if (!name && !email && !phone_number) {
       return res
         .status(400)
         .json({ message: "At least one search parameter is required" });
     }
 
-    // Convert userId to uppercase if provided
-    if (userId) {
-      userId = userId.toUpperCase();
+    const searchConditions = [];
+
+    if (name) {
+      searchConditions.push({ name: { $regex: name, $options: "i" } });
+    }
+    if (email) {
+      searchConditions.push({ email: { $regex: email, $options: "i" } });
+    }
+    if (phone_number) {
+      searchConditions.push({
+        phone_number: { $regex: phone_number, $options: "i" },
+      });
     }
 
-    // Build search conditions dynamically
-    const searchConditions = [];
-    if (name) searchConditions.push({ name: { $regex: name, $options: "i" } }); // case-insensitive
-    if (email) searchConditions.push({ email: { $regex: email, $options: "i" } }); // case-insensitive
-    if (phone_number) searchConditions.push({ phone_number: { $regex: phone_number, $options: "i" } }); // partial match
-    if (userId) searchConditions.push({ userId: userId });
+    // Base query: only farmer users
+    const query = { role: "farmer" };
+    if (searchConditions.length > 0) {
+      query.$or = searchConditions;
+    }
 
-    // Fetch all matching users with limit of 5
-    const users = await User.find({ $or: searchConditions })
-      .select("name email phone_number _id user_image userId")
-      .limit(5);
+    // 1️⃣ Find matching farmer users (basic info)
+    const users = await User.find(query)
+      .select("name email phone_number _id") // user_image is in FarmerProfile, not here
+      .limit(5)
+      .lean();
 
     if (!users.length) {
-      return res.status(404).json({ message: "No users found" });
+      return res.status(404).json({ message: "No farmers found" });
     }
 
-    return res.status(200).json({ message: "Users found", users });
+    // 2️⃣ Find corresponding FarmerProfiles to get farmerId + user_image
+    const userIds = users.map((u) => u._id);
+
+    const farmerProfiles = await FarmerProfiles.find({
+      user: { $in: userIds },
+    })
+      .select("user farmerId user_image")
+      .lean();
+
+    const profileMap = {};
+    farmerProfiles.forEach((profile) => {
+      profileMap[profile.user.toString()] = {
+        farmerId: profile.farmerId,
+        user_image: profile.user_image || null,
+      };
+    });
+
+    // 3️⃣ Merge profile data into user objects
+    const usersWithFarmerData = users.map((u) => {
+      const profile = profileMap[u._id.toString()] || {};
+      return {
+        ...u,
+        farmerId: profile.farmerId || null,
+        user_image: profile.user_image || null,
+      };
+    });
+
+    return res
+      .status(200)
+      .json({ message: "Farmers found", users: usersWithFarmerData });
   } catch (error) {
-    console.error("Error finding users:", error);
-    return res.status(500).json({ message: "Internal server error", error });
+    console.error("Error finding farmers:", error);
+    return res
+      .status(500)
+      .json({ message: "Internal server error", error });
   }
 };
 

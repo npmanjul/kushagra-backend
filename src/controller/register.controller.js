@@ -1,12 +1,14 @@
 import User from "../model/Users.model.js";
+import Farmer from "../model/Farmer.model.js";
 import { encryptPassword } from "../utils/bcrypt.js";
+import { generateToken } from "../utils/jwt.js";
+import { generateFarmerId } from "../utils/miscellaneous.js";
+import StorageBucketModel from "../model/StorageBucket.model.js";
 import {
   deleteFromCloudinary,
   extractPublicId,
   uploadOnCloudinary,
 } from "../utils/cloudinary.js";
-import { generateToken } from "../utils/jwt.js";
-import { generateFarmerId } from "../utils/miscellaneous.js";
 
 // Step 1: Personal Information
 const registerStep1 = async (req, res) => {
@@ -25,11 +27,10 @@ const registerStep1 = async (req, res) => {
     // Encrypt password
     const hashedPassword = await encryptPassword(password);
 
-    const userId = await generateFarmerId();
+    const farmerId = await generateFarmerId();
 
     // Create user
     const newUser = await User.create({
-      userId: userId,
       name,
       email,
       phone_number,
@@ -38,6 +39,24 @@ const registerStep1 = async (req, res) => {
       gender,
       dob,
       step_completed: 1,
+    });
+
+    // Create farmer profile linked to this user
+    const farmerProfile = await Farmer.create({
+      user: newUser._id,
+      farmerId: farmerId,
+    });
+
+    // Create storage bucket for farmer
+    await StorageBucketModel.create({
+      bucket_owner_type: "User",
+      bucket_owner_id: newUser._id,
+      categories: [],
+    });
+
+    // Link farmer profile to user
+    await User.findByIdAndUpdate(newUser._id, {
+      farmerProfile: farmerProfile._id,
     });
 
     // Generate tokens
@@ -61,9 +80,16 @@ const registerStep2 = async (req, res) => {
 
     const { address, tehsil, district, state, landmark, pin_code } = req.body;
 
-    // Update user in MongoDB
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
+    // Find farmer profile using user ID
+    const farmerProfile = await Farmer.findOne({ user: userId });
+
+    if (!farmerProfile) {
+      return res.status(404).json({ message: "Farmer profile not found" });
+    }
+
+    // Update the farmer profile
+    const updatedFarmer = await Farmer.findByIdAndUpdate(
+      farmerProfile._id,
       {
         address,
         tehsil,
@@ -71,9 +97,16 @@ const registerStep2 = async (req, res) => {
         state,
         landmark,
         pin_code,
+      },
+      { new: true }
+    );
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      {
         step_completed: 2,
       },
-      { new: true } // return the updated document
+      { new: true }
     );
 
     if (!updatedUser) {
@@ -81,8 +114,9 @@ const registerStep2 = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: "Step 2 saved",
+      message: "Step 2 saved successfully",
       step_completed: updatedUser.step_completed,
+      data: updatedFarmer,
     });
   } catch (error) {
     console.error("Step 2 Error:", error);
@@ -90,80 +124,151 @@ const registerStep2 = async (req, res) => {
   }
 };
 
-// Step 3: Farmer Identification (Mongoose)
+// Step 3: Documents & IDs
 const registerStep3 = async (req, res) => {
   try {
-    const { aadhaar_number, pan_number, khatauni_id, land_size } = req.body;
-    const { aadhaarImg, panImg, khatauniImg, userImage } = req.files;
-    const userId = req.user.userId; // from authMiddleware
+    const { aadhaar_number, pan_number, land_size } = req.body;
 
-    // Get existing user data
-    const existingUser = await User.findById(userId).select(
-      "aadhaar_image pan_image khatauni_image user_image"
+    // Support both "khatauni_ids[]" and "khatauni_ids"
+    const khatauni_ids =
+      req.body["khatauni_ids[]"] || req.body.khatauni_ids || [];
+
+    const khatauniIdsArray = Array.isArray(khatauni_ids)
+      ? khatauni_ids
+      : [khatauni_ids].filter(Boolean);
+
+    if (!pan_number) {
+      return res.status(400).json({ message: "PAN number is required" });
+    }
+
+    const userId = req.user.userId; // from auth middleware
+
+    // Find farmer profile using the user id (not Farmer._id)
+    const farmerProfile = await Farmer.findOne({ user: userId }).select(
+      "aadhaar_image pan_image khatauni_images user_image"
     );
 
-    if (!existingUser) {
-      return res.status(404).json({ message: "User not found" });
+    if (!farmerProfile) {
+      return res.status(404).json({ message: "Farmer profile not found" });
     }
 
-    // --- Delete old images if present ---
-    if (existingUser.user_image) {
-      const publicId = extractPublicId(existingUser.user_image);
-      if (publicId) await deleteFromCloudinary(publicId);
-    }
-    if (existingUser.aadhaar_image) {
-      const publicId = extractPublicId(existingUser.aadhaar_image);
-      if (publicId) await deleteFromCloudinary(publicId);
-    }
-    if (existingUser.pan_image) {
-      const publicId = extractPublicId(existingUser.pan_image);
-      if (publicId) await deleteFromCloudinary(publicId);
-    }
-    if (existingUser.khatauni_image) {
-      const publicId = extractPublicId(existingUser.khatauni_image);
-      if (publicId) await deleteFromCloudinary(publicId);
+    // --- Delete old images from Cloudinary ---
+    const allOldImages = [];
+
+    if (farmerProfile.user_image) allOldImages.push(farmerProfile.user_image);
+    if (farmerProfile.aadhaar_image)
+      allOldImages.push(farmerProfile.aadhaar_image);
+    if (farmerProfile.pan_image) allOldImages.push(farmerProfile.pan_image);
+
+    if (
+      farmerProfile.khatauni_images &&
+      Array.isArray(farmerProfile.khatauni_images)
+    ) {
+      farmerProfile.khatauni_images.forEach((img) => {
+        if (img.image_url) allOldImages.push(img.image_url);
+      });
     }
 
-    // --- Upload new images ---
-    const userImageUrl = userImage
-      ? await uploadOnCloudinary(userImage[0].path)
-      : null;
-    const aadhaarImageUrl = aadhaarImg
-      ? await uploadOnCloudinary(aadhaarImg[0].path)
-      : null;
-    const panImageUrl = panImg
-      ? await uploadOnCloudinary(panImg[0].path)
-      : null;
-    const khatauniImageUrl = khatauniImg
-      ? await uploadOnCloudinary(khatauniImg[0].path)
-      : null;
+    for (const img of allOldImages) {
+      const publicId = extractPublicId(img);
+      if (publicId) {
+        try {
+          await deleteFromCloudinary(publicId);
+        } catch (delErr) {
+          // log but continue — deletion failure shouldn't block the update
+          console.warn(
+            "Failed to delete image from Cloudinary:",
+            publicId,
+            delErr
+          );
+        }
+      }
+    }
 
-    // --- Update user in MongoDB ---
+    // --- Upload new images (order of pushes determines mapping later) ---
+    const uploadTasks = [];
+
+    if (req.files?.userImage?.[0]) {
+      uploadTasks.push(uploadOnCloudinary(req.files.userImage[0].path));
+    }
+
+    if (req.files?.aadhaarImg?.[0]) {
+      uploadTasks.push(uploadOnCloudinary(req.files.aadhaarImg[0].path));
+    }
+
+    if (req.files?.panImg?.[0]) {
+      uploadTasks.push(uploadOnCloudinary(req.files.panImg[0].path));
+    }
+
+    const khatauniImages =
+      req.files?.["khatauni_images[]"] || req.files?.khatauni_images || [];
+
+    if (Array.isArray(khatauniImages)) {
+      khatauniImages.forEach((img) => {
+        uploadTasks.push(uploadOnCloudinary(img.path));
+      });
+    }
+
+    // Wait for all uploads; if any rejects, Promise.all will throw and we return 500
+    const uploadedFiles = uploadTasks.length
+      ? await Promise.all(uploadTasks)
+      : [];
+
+    // Map uploaded files back in the same order as pushed
+    let index = 0;
+    const userImageUrl = uploadedFiles[index++]?.secure_url || null;
+    const aadhaarImageUrl = uploadedFiles[index++]?.secure_url || null;
+    const panImageUrl = uploadedFiles[index++]?.secure_url || null;
+
+    const khatauniEntries = [];
+    for (let i = 0; i < khatauniIdsArray.length; i++) {
+      khatauniEntries.push({
+        khatauni_id: khatauniIdsArray[i],
+        image_url: uploadedFiles[index++]?.secure_url || null,
+      });
+    }
+
+    // --- FINAL UPDATE (Only after ALL uploads succeed) ---
+    const updateData = {
+      aadhaar_number,
+      pan_number,
+      land_size,
+      // only overwrite fields if we got new urls (null will explicitly set null if upload missing)
+      user_image: userImageUrl,
+      aadhaar_image: aadhaarImageUrl,
+      pan_image: panImageUrl,
+      khatauni_images: khatauniEntries,
+    };
+
+    const updatedFarmer = await Farmer.findByIdAndUpdate(
+      farmerProfile._id,
+      updateData,
+      { new: true }
+    );
+
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       {
-        aadhaar_number,
-        pan_number,
-        khatauni_id,
-        user_image: userImageUrl?.secure_url || existingUser.user_image,
-        aadhaar_image:
-          aadhaarImageUrl?.secure_url || existingUser.aadhaar_image,
-        pan_image: panImageUrl?.secure_url || existingUser.pan_image,
-        khatauni_image:
-          khatauniImageUrl?.secure_url || existingUser.khatauni_image,
-        land_size,
         step_completed: 3,
       },
       { new: true }
     );
 
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
     return res.status(200).json({
-      message: "Step 3 saved",
+      message: "Step 3 saved successfully",
       step_completed: updatedUser.step_completed,
+      khatauni_entries_saved: (updatedFarmer.khatauni_images || []).length,
+      data: updatedFarmer,
     });
   } catch (error) {
     console.error("Step 3 Error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res
+      .status(500)
+      .json({ message: "Internal server error", error: error.message });
   }
 };
 
@@ -180,51 +285,62 @@ const registerStep4 = async (req, res) => {
 
     const userId = req.user.userId; // from authMiddleware
 
-    const { bank_passbook_img } = req.files;
-
-    // Get existing user
-    const existingUser = await User.findById(userId).select(
+    // Find FarmerProfile by linked user
+    const farmerProfile = await Farmer.findOne({ user: userId }).select(
       "bank_passbook_img"
     );
 
-    if (!existingUser) {
-      return res.status(404).json({ message: "User not found" });
+    if (!farmerProfile) {
+      return res.status(404).json({ message: "Farmer profile not found" });
     }
 
     // --- Delete old image if present ---
-    if (existingUser.bank_passbook_img) {
-      const publicId = extractPublicId(existingUser.bank_passbook_img);
-      if (publicId) await deleteFromCloudinary(publicId);
+    if (farmerProfile.bank_passbook_img) {
+      const publicId = extractPublicId(farmerProfile.bank_passbook_img);
+      if (publicId) {
+        try {
+          await deleteFromCloudinary(publicId);
+        } catch (err) {
+          console.warn("Failed to delete old image:", err.message);
+        }
+      }
     }
 
-    // --- Upload new image ---
-    const bankPassbookImageUrl = bank_passbook_img
-      ? await uploadOnCloudinary(bank_passbook_img[0].path)
-      : null;
+    // --- Upload new image if provided ---
+    let bankPassbookImageUrl = farmerProfile.bank_passbook_img;
+    if (req.files?.bank_passbook_img?.[0]) {
+      const uploadResult = await uploadOnCloudinary(
+        req.files.bank_passbook_img[0].path
+      );
+      bankPassbookImageUrl = uploadResult?.secure_url || bankPassbookImageUrl;
+    }
 
-    // --- Update user in MongoDB ---
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
+    // --- Update FarmerProfile ---
+    await Farmer.findByIdAndUpdate(
+      farmerProfile._id,
       {
         account_number,
         ifsc_code,
         account_holder,
         bank_name,
         branch_name,
-        bank_passbook_img:
-          bankPassbookImageUrl?.secure_url || existingUser.bank_passbook_img,
-        step_completed: 4,
+        bank_passbook_img: bankPassbookImageUrl,
       },
-      { new: true } // return updated document
+      { new: true }
     );
 
+    // --- Update User step_completed ---
+    await User.findByIdAndUpdate(userId, { step_completed: 4 });
+
     return res.status(200).json({
-      message: "Step 4 saved",
-      step_completed: updatedUser.step_completed,
+      message: "Step 4  saved successfully",
+      step_completed: 4,
     });
   } catch (error) {
     console.error("Step 4 Error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res
+      .status(500)
+      .json({ message: "Internal server error", error: error.message });
   }
 };
 
@@ -245,44 +361,61 @@ const registerStep5 = async (req, res) => {
 
     const userId = req.user.userId;
 
-    const { nominee_image, nominee_aadhaar_image, nominee_pan_image } =
-      req.files;
+    // destructure uploaded files
+    const { nominee_image, nominee_aadhaar_image, nominee_pan_image } = req.files || {};
 
-    const existingUser = await User.findById(userId).select(
+    // Find farmer profile linked to this user
+    const farmerProfile = await Farmer.findOne({ user: userId }).select(
       "nominee_image nominee_aadhaar_image nominee_pan_image"
     );
 
-    if (!existingUser) {
-      return res.status(404).json({ message: "User not found" });
+    if (!farmerProfile) {
+      return res.status(404).json({ message: "Farmer profile not found" });
     }
 
-    if (existingUser.nominee_image) {
-      const publicId = extractPublicId(existingUser.nominee_image);
-      if (publicId) await deleteFromCloudinary(publicId);
+    // --- DELETE OLD IMAGES ---
+    const oldImages = [
+      farmerProfile.nominee_image,
+      farmerProfile.nominee_aadhaar_image,
+      farmerProfile.nominee_pan_image,
+    ];
+
+    for (const img of oldImages) {
+      if (img) {
+        const publicId = extractPublicId(img);
+        if (publicId) {
+          try {
+            await deleteFromCloudinary(publicId);
+          } catch (err) {
+            console.warn("Error deleting old nominee image:", err.message);
+          }
+        }
+      }
     }
 
-    if (existingUser.nominee_aadhaar_image) {
-      const publicId = extractPublicId(existingUser.nominee_aadhaar_image);
-      if (publicId) await deleteFromCloudinary(publicId);
+    // --- UPLOAD NEW IMAGES IF AVAILABLE ---
+    let nomineeImageUrl = farmerProfile.nominee_image;
+    let nomineeAadhaarImageUrl = farmerProfile.nominee_aadhaar_image;
+    let nomineePanImageUrl = farmerProfile.nominee_pan_image;
+
+    if (nominee_image?.[0]) {
+      const uploaded = await uploadOnCloudinary(nominee_image[0].path);
+      nomineeImageUrl = uploaded?.secure_url || nomineeImageUrl;
     }
 
-    if (existingUser.nominee_pan_image) {
-      const publicId = extractPublicId(existingUser.nominee_pan_image);
-      if (publicId) await deleteFromCloudinary(publicId);
+    if (nominee_aadhaar_image?.[0]) {
+      const uploaded = await uploadOnCloudinary(nominee_aadhaar_image[0].path);
+      nomineeAadhaarImageUrl = uploaded?.secure_url || nomineeAadhaarImageUrl;
     }
 
-    const nomineeImageUrl = nominee_image
-      ? await uploadOnCloudinary(nominee_image[0].path)
-      : null;
-    const nomineeAadhaarImageUrl = nominee_aadhaar_image
-      ? await uploadOnCloudinary(nominee_aadhaar_image[0].path)
-      : null;
-    const nomineePanImageUrl = nominee_pan_image
-      ? await uploadOnCloudinary(nominee_pan_image[0].path)
-      : null;
+    if (nominee_pan_image?.[0]) {
+      const uploaded = await uploadOnCloudinary(nominee_pan_image[0].path);
+      nomineePanImageUrl = uploaded?.secure_url || nomineePanImageUrl;
+    }
 
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
+    // --- UPDATE FARMER PROFILE ---
+    await Farmer.findByIdAndUpdate(
+      farmerProfile._id,
       {
         nominee_name,
         nominee_dob,
@@ -293,25 +426,23 @@ const registerStep5 = async (req, res) => {
         nominee_relation,
         nominee_gender,
         nominee_address,
-        nominee_aadhaar_image:
-          nomineeAadhaarImageUrl?.secure_url ||
-          existingUser.nominee_aadhaar_image,
-        nominee_image:
-          nomineeImageUrl?.secure_url || existingUser.nominee_image,
-        nominee_pan_image:
-          nomineePanImageUrl?.secure_url || existingUser.nominee_pan_image,
-        step_completed: 5,
+        nominee_image: nomineeImageUrl,
+        nominee_aadhaar_image: nomineeAadhaarImageUrl,
+        nominee_pan_image: nomineePanImageUrl,
       },
       { new: true }
     );
 
+    // --- UPDATE USER STEP COMPLETED ---
+    await User.findByIdAndUpdate(userId, { step_completed: 5 });
+
     return res.status(200).json({
-      message: "Registration Completed 🎉",
-      step_completed: updatedUser.step_completed,
+      message: "Step 5 (Nominee Details) saved successfully 🎉",
+      step_completed: 5,
     });
   } catch (error) {
     console.error("Step 5 Error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ message: "Internal server error", error: error.message });
   }
 };
 
@@ -321,28 +452,42 @@ const registerStep6 = async (req, res) => {
     const { account_pin } = req.body;
     const userId = req.user.userId;
 
-    const encryptPIN = await encryptPassword(account_pin);
+    if (!account_pin) {
+      return res.status(400).json({ message: "PIN is required" });
+    }
 
+    // Check if User exists
+    const userExists = await User.findById(userId);
+    if (!userExists) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Farmer profile check (just to ensure profile exists, same as steps 2–5)
+    const farmerProfile = await Farmer.findOne({ user: userId });
+    if (!farmerProfile) {
+      return res.status(404).json({ message: "Farmer profile not found" });
+    }
+
+    // Encrypt PIN
+    const encryptedPIN = await encryptPassword(account_pin);
+
+    // Update user's PIN + step
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       {
-        account_pin: encryptPIN,
+        account_pin: encryptedPIN,
         step_completed: 6,
       },
       { new: true }
     );
 
-    if (!updatedUser) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
     return res.status(200).json({
-      message: "Step 6 saved",
+      message: "Step 6 saved successfully",
       step_completed: updatedUser.step_completed,
     });
   } catch (error) {
     console.error("Step 6 Error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ message: "Internal server error", error: error.message });
   }
 };
 
