@@ -6,7 +6,7 @@ import cors from "cors";
 const app = express();
 
 const corsOptions = {
-  origin: ["http://localhost:3000","http://localhost:3001"],
+  origin: ["http://localhost:3000","http://localhost:3001","https://storage-frontend-one.vercel.app"],
   credentials: true,
 };
 
