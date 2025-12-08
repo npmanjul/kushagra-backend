@@ -1,7 +1,7 @@
 import Farmer from "../model/Farmer.model.js";
 import Employee from "../model/Employee.model.js";
 import OTP from "../model/Otp.model.js";
-import transporter from "./emailService.js";
+import transporter from "./emailservice.js";
 
 // Generate Farmer ID
 const generateFarmerId = async () => {
