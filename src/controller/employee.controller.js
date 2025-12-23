@@ -22,6 +22,13 @@ const employee_onboarding_step_1 = async (req, res) => {
       dob,
     } = req.body;
 
+    const userId = req.user?.userId;
+
+    const user = await User.findById(userId);
+    if (user.role !== "admin") {
+      return res.status(400).json({ message: "Only admin can perform this operation" });
+    }
+
     const employee = await User.findOne({
       $or: [{ email }, { phone_number }],
     });

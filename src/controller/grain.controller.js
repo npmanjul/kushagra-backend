@@ -1,8 +1,15 @@
 import GrainCategories from "../model/GrainCategories.model.js";
+import Users from "../model/Users.model.js";
 
 const CreateGrainCategoies = async (req, res) => {
   try {
     const { grain_type } = req.body;
+    const userId = req.user?.userId;
+    
+    const user = await Users.findById(userId);
+    if (user.role !== "admin") {
+      return res.status(400).json({ message: "Only admin can perform this operation" });
+    }
 
     if (!grain_type) {
       return res.status(400).json({ message: "Grain type is required" });
