@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 const { Schema } = mongoose;
+import { FarmerProfileVerificationSchema } from "./FarmerProfileVerification.model.js";
 
 export const Roles = ["farmer", "manager", "supervisor", "admin", "staff"];
 export const Genders = ["male", "female", "other"];
@@ -16,31 +17,25 @@ const UserSchema = new Schema(
     email: { type: String, unique: true, required: true },
     gender: { type: String, enum: Genders },
     dob: { type: String },
-    
+
     // credential
     password: { type: String, required: true },
     account_pin: { type: String },
-    
+
     // Verification and flags
     registration_date: { type: Date, default: Date.now },
     step_completed: { type: Number, default: 0 },
-    isVerified: { type: Boolean, default: false },
-    verifiedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "EmployeeProfile",
-    }, // who verified
-    verifiedAt: { type: Date },
+    is_active: { type: Boolean, default: true },
 
     // links to role-specific profiles (one-to-one)
     farmerProfile: {
       type: Schema.Types.ObjectId,
-      ref: "FarmerProfile",
-      default: null,
+      ref: "FarmerProfiles",
     },
+    farmerVerification: FarmerProfileVerificationSchema,
     employeeProfile: {
       type: Schema.Types.ObjectId,
-      ref: "EmployeeProfile",
-      default: null,
+      ref: "EmployeeProfiles",
     },
   },
   { timestamps: { createdAt: "created_at", updatedAt: "updated_at" } }

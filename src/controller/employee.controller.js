@@ -1,5 +1,6 @@
 import Employee from "../model/Employee.model.js";
 import User from "../model/Users.model.js";
+import Warehouse from "../model/Warehouses.model.js";
 import { encryptPassword } from "../utils/bcrypt.js";
 import { generateEmployeeId } from "../utils/miscellaneous.js";
 import {
@@ -11,8 +12,6 @@ import {
 /* ------------ Step 1: Account Setup ------------ */
 const employee_onboarding_step_1 = async (req, res) => {
   try {
- 
-
     const {
       role,
       name,
@@ -28,14 +27,12 @@ const employee_onboarding_step_1 = async (req, res) => {
     });
 
     if (employee) {
-      const empId= await Employee.findOne({ user: employee._id });
-      return res
-        .status(400)
-        .json({
-          message: "Employee already exists",
-          step_completed: employee.step_completed,
-          id: empId._id,
-        });
+      const empId = await Employee.findOne({ user: employee._id });
+      return res.status(400).json({
+        message: "Employee already exists",
+        step_completed: employee.step_completed,
+        id: empId._id,
+      });
     }
 
     const generatePassword = () => {
@@ -120,14 +117,15 @@ const employee_onboarding_step_2 = async (req, res) => {
     // Use employee name for default avatar (fallback if name not present)
     const avatarName =
       employeeProfile.fullName ||
-      `${employeeProfile.firstName || ""} ${employeeProfile.lastName || ""}`.trim() ||
+      `${employeeProfile.firstName || ""} ${
+        employeeProfile.lastName || ""
+      }`.trim() ||
       "Employee";
 
     const defaultImageUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(
       avatarName
     )}&background=random&size=256`;
 
-    
     const uploadedFile =
       req.file ||
       (req.files?.employeeImage && req.files.employeeImage[0]) ||
@@ -137,9 +135,7 @@ const employee_onboarding_step_2 = async (req, res) => {
 
     if (uploadedFile) {
       try {
-        const uploadResult = await uploadOnCloudinary(
-          uploadedFile.path 
-        );
+        const uploadResult = await uploadOnCloudinary(uploadedFile.path);
 
         if (uploadResult?.secure_url) {
           const newUrl = uploadResult.secure_url;
@@ -166,7 +162,6 @@ const employee_onboarding_step_2 = async (req, res) => {
         console.error("Error uploading image to Cloudinary:", err);
       }
     }
-
 
     // ----- Update Employee Profile -----
     await Employee.findByIdAndUpdate(
@@ -649,6 +644,1497 @@ const employee_onboarding_step_7 = async (req, res) => {
   }
 };
 
+const getManagerDetails = async (req, res) => {
+  try {
+    const { managerId } = req.query;
+    const requestingUserId = req.user?.userId;
+
+    if (!requestingUserId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // Get requesting user to check role
+    const requestingUser = await User.findById(requestingUserId).select("role");
+    if (!requestingUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Requesting user not found",
+      });
+    }
+
+    // Only admin can view any manager, others can only view their own details
+    let targetManagerId = managerId;
+    if (!["admin"].includes(requestingUser.role)) {
+      // Non-admin users can only view their own details if they are a manager
+      if (requestingUser.role !== "manager") {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. Only admins and managers can access manager details.",
+        });
+      }
+      targetManagerId = requestingUserId; // Force to view own details
+    }
+
+    if (!targetManagerId) {
+      return res.status(400).json({
+        success: false,
+        message: "Manager ID is required",
+      });
+    }
+
+    // Fetch manager's user details with employee profile populated
+    const managerUser = await User.findById(targetManagerId)
+      .select("-password -account_pin")
+      .populate({
+        path: "employeeProfile",
+        populate: {
+          path: "reportingManager",
+          select: "employeeId employeeImage",
+        },
+      })
+      .lean();
+
+    if (!managerUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Manager not found",
+      });
+    }
+
+    if (managerUser.role !== "manager") {
+      return res.status(400).json({
+        success: false,
+        message: "User is not a manager",
+      });
+    }
+
+    // Get warehouse assignment for this manager
+    // Try matching by User._id and EmployeeProfile._id
+    const employeeProfileId = managerUser.employeeProfile?._id;
+
+    const warehouse = await Warehouse.findOne({
+      $or: [{ manager_id: targetManagerId }, { manager_id: employeeProfileId }],
+    })
+      .select("_id name location capacity_quintal created_at")
+      .lean();
+
+    // Get reporting manager's user details if exists
+    let reportingManagerDetails = null;
+    if (managerUser.employeeProfile?.reportingManager) {
+      const reportingManagerProfile = await Employee.findById(
+        managerUser.employeeProfile.reportingManager
+      )
+        .populate({
+          path: "user",
+          select: "name phone_number email",
+        })
+        .lean();
+
+      if (reportingManagerProfile?.user) {
+        reportingManagerDetails = {
+          _id: reportingManagerProfile.user._id,
+          name: reportingManagerProfile.user.name,
+          phone: reportingManagerProfile.user.phone_number,
+          email: reportingManagerProfile.user.email,
+          employee_id: reportingManagerProfile.employeeId,
+          photo: reportingManagerProfile.employeeImage,
+        };
+      }
+    }
+
+    // Build comprehensive response
+    const response = {
+      // User Details
+      _id: managerUser._id,
+      name: managerUser.name,
+      phone_number: managerUser.phone_number,
+      secondary_phone_number: managerUser.secondary_phone_number,
+      email: managerUser.email,
+      gender: managerUser.gender,
+      dob: managerUser.dob,
+      role: managerUser.role,
+      is_active: managerUser.is_active ?? true,
+      registration_date: managerUser.registration_date,
+      step_completed: managerUser.step_completed,
+
+      // Employee Profile Details
+      employee_id: managerUser.employeeProfile?.employeeId || null,
+      employee_profile_id: managerUser.employeeProfile?._id || null,
+      photo: managerUser.employeeProfile?.employeeImage || null,
+
+      // Personal Info
+      marital_status: managerUser.employeeProfile?.maritalStatus || null,
+      nationality: managerUser.employeeProfile?.nationality || null,
+      blood_group: managerUser.employeeProfile?.bloodGroup || null,
+
+      // Address
+      permanent_address: managerUser.employeeProfile?.permanentAddress || null,
+      current_address: managerUser.employeeProfile?.currentAddress || null,
+      same_as_permanent: managerUser.employeeProfile?.sameAsPermanent || false,
+
+      // Employment Details
+      employment_type: managerUser.employeeProfile?.employmentType || null,
+      date_of_joining: managerUser.employeeProfile?.dateOfJoining || null,
+      employment_status: managerUser.employeeProfile?.employmentStatus || null,
+      salary: managerUser.employeeProfile?.salary || null,
+
+      // Bank Details
+      bank_details: {
+        account_number: managerUser.employeeProfile?.account_number || null,
+        ifsc_code: managerUser.employeeProfile?.ifsc_code || null,
+        account_holder: managerUser.employeeProfile?.account_holder || null,
+        bank_name: managerUser.employeeProfile?.bank_name || null,
+        branch_name: managerUser.employeeProfile?.branch_name || null,
+        upi_id: managerUser.employeeProfile?.upiId || null,
+      },
+
+      // Government IDs
+      govt_ids: {
+        pan_number: managerUser.employeeProfile?.panNumber || null,
+        aadhaar_number: managerUser.employeeProfile?.aadhaarNumber || null,
+        passport_number: managerUser.employeeProfile?.passportNumber || null,
+        passport_expiry: managerUser.employeeProfile?.passportExpiry || null,
+        pf_number: managerUser.employeeProfile?.pfNumber || null,
+        esi_number: managerUser.employeeProfile?.esiNumber || null,
+        tax_status: managerUser.employeeProfile?.taxStatus || null,
+      },
+
+      // Education & Experience
+      education: managerUser.employeeProfile?.education || [],
+      certifications: managerUser.employeeProfile?.certifications || [],
+      experience: managerUser.employeeProfile?.experience || [],
+      total_experience_years:
+        managerUser.employeeProfile?.totalExperienceYears || 0,
+
+      // Skills & Additional
+      skills: managerUser.employeeProfile?.skills || [],
+      medical_conditions:
+        managerUser.employeeProfile?.medicalConditions || null,
+      emergency_contacts: managerUser.employeeProfile?.emergencyContacts || [],
+      hr_notes: managerUser.employeeProfile?.hrNotes || null,
+      background_check_status:
+        managerUser.employeeProfile?.backgroundCheckStatus || "Pending",
+      onboarding_completed:
+        managerUser.employeeProfile?.onboardingCompleted || false,
+
+      // Reporting Manager
+      reporting_manager: reportingManagerDetails,
+
+      // Warehouse Assignment
+      is_engaged: !!warehouse,
+      warehouse: warehouse
+        ? {
+            _id: warehouse._id,
+            name: warehouse.name,
+            location: warehouse.location,
+            capacity_quintal: warehouse.capacity_quintal,
+            created_at: warehouse.created_at,
+          }
+        : null,
+
+      // Timestamps
+      created_at:
+        managerUser.employeeProfile?.createdAt || managerUser.created_at,
+      updated_at:
+        managerUser.employeeProfile?.updatedAt || managerUser.updated_at,
+    };
+
+    return res.status(200).json({
+      success: true,
+      message: "Manager details fetched successfully",
+      data: response,
+    });
+  } catch (error) {
+    console.error("Error fetching manager details:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+const updateManagerDetails = async (req, res) => {
+  try {
+    const { managerId } = req.query;
+    const requestingUserId = req.user?.userId;
+
+    if (!requestingUserId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // Get requesting user to check role
+    const requestingUser = await User.findById(requestingUserId).select("role");
+    if (!requestingUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Requesting user not found",
+      });
+    }
+
+    // Determine target manager ID based on role
+    let targetManagerId = managerId;
+    const isAdmin = requestingUser.role === "admin";
+
+    if (!isAdmin) {
+      // Non-admin can only update their own details if they are a manager
+      if (requestingUser.role !== "manager") {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. Only admins and managers can update manager details.",
+        });
+      }
+      targetManagerId = requestingUserId; // Force to update own details
+    }
+
+    if (!targetManagerId) {
+      return res.status(400).json({
+        success: false,
+        message: "Manager ID is required",
+      });
+    }
+
+    // Fetch manager user with employee profile
+    const managerUser = await User.findById(targetManagerId).populate(
+      "employeeProfile"
+    );
+    if (!managerUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Manager not found",
+      });
+    }
+
+    if (managerUser.role !== "manager") {
+      return res.status(400).json({
+        success: false,
+        message: "User is not a manager",
+      });
+    }
+
+    const employeeProfile = managerUser.employeeProfile;
+    if (!employeeProfile) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee profile not found for this manager",
+      });
+    }
+
+    // Extract fields from request body
+    const {
+      // User model fields
+      name,
+      phone_number,
+      secondary_phone_number,
+      email,
+      gender,
+      dob,
+      is_active,
+
+      // Employee Profile fields - Personal Info
+      maritalStatus,
+      nationality,
+      bloodGroup,
+
+      // Address
+      permanentAddress,
+      currentAddress,
+      sameAsPermanent,
+
+      // Employment
+      employmentType,
+      dateOfJoining,
+      employmentStatus,
+      salary,
+
+      // Bank Details
+      account_number,
+      ifsc_code,
+      account_holder,
+      bank_name,
+      branch_name,
+      upiId,
+
+      // Government IDs
+      panNumber,
+      aadhaarNumber,
+      passportNumber,
+      passportExpiry,
+      pfNumber,
+      esiNumber,
+      taxStatus,
+
+      // Skills & Additional
+      skills,
+      medicalConditions,
+      emergencyContacts,
+      hrNotes,
+      backgroundCheckStatus,
+    } = req.body;
+
+    // Build User update object (only changed fields)
+    const userUpdateFields = {};
+
+    // Fields that managers can update themselves
+    const selfUpdateUserFields = [
+      "name",
+      "secondary_phone_number",
+      "gender",
+      "dob",
+    ];
+    // Fields only admin can update
+    const adminOnlyUserFields = ["phone_number", "email", "is_active"];
+
+    if (name !== undefined) userUpdateFields.name = name;
+    if (secondary_phone_number !== undefined)
+      userUpdateFields.secondary_phone_number = secondary_phone_number;
+    if (gender !== undefined) userUpdateFields.gender = gender;
+    if (dob !== undefined) userUpdateFields.dob = dob;
+
+    // Admin-only fields
+    if (isAdmin) {
+      if (phone_number !== undefined)
+        userUpdateFields.phone_number = phone_number;
+      if (email !== undefined) userUpdateFields.email = email;
+      if (is_active !== undefined) userUpdateFields.is_active = is_active;
+    }
+
+    // Build Employee Profile update object
+    const employeeUpdateFields = {};
+
+    // Fields managers can update themselves
+    if (maritalStatus !== undefined)
+      employeeUpdateFields.maritalStatus = maritalStatus;
+    if (nationality !== undefined)
+      employeeUpdateFields.nationality = nationality;
+    if (bloodGroup !== undefined) employeeUpdateFields.bloodGroup = bloodGroup;
+    if (permanentAddress !== undefined)
+      employeeUpdateFields.permanentAddress = permanentAddress;
+    if (currentAddress !== undefined)
+      employeeUpdateFields.currentAddress = currentAddress;
+    if (sameAsPermanent !== undefined)
+      employeeUpdateFields.sameAsPermanent = sameAsPermanent;
+    if (skills !== undefined) employeeUpdateFields.skills = skills;
+    if (medicalConditions !== undefined)
+      employeeUpdateFields.medicalConditions = medicalConditions;
+    if (emergencyContacts !== undefined)
+      employeeUpdateFields.emergencyContacts = emergencyContacts;
+
+    // Bank details - self update allowed
+    if (account_number !== undefined)
+      employeeUpdateFields.account_number = account_number;
+    if (ifsc_code !== undefined) employeeUpdateFields.ifsc_code = ifsc_code;
+    if (account_holder !== undefined)
+      employeeUpdateFields.account_holder = account_holder;
+    if (bank_name !== undefined) employeeUpdateFields.bank_name = bank_name;
+    if (branch_name !== undefined)
+      employeeUpdateFields.branch_name = branch_name;
+    if (upiId !== undefined) employeeUpdateFields.upiId = upiId;
+
+    // Government IDs - self update allowed
+    if (panNumber !== undefined) employeeUpdateFields.panNumber = panNumber;
+    if (aadhaarNumber !== undefined)
+      employeeUpdateFields.aadhaarNumber = aadhaarNumber;
+    if (passportNumber !== undefined)
+      employeeUpdateFields.passportNumber = passportNumber;
+    if (passportExpiry !== undefined)
+      employeeUpdateFields.passportExpiry = new Date(passportExpiry);
+    if (pfNumber !== undefined) employeeUpdateFields.pfNumber = pfNumber;
+    if (esiNumber !== undefined) employeeUpdateFields.esiNumber = esiNumber;
+    if (taxStatus !== undefined) employeeUpdateFields.taxStatus = taxStatus;
+
+    // Admin-only employee fields
+    if (isAdmin) {
+      if (employmentType !== undefined)
+        employeeUpdateFields.employmentType = employmentType;
+      if (dateOfJoining !== undefined)
+        employeeUpdateFields.dateOfJoining = new Date(dateOfJoining);
+      if (employmentStatus !== undefined)
+        employeeUpdateFields.employmentStatus = employmentStatus;
+      if (salary !== undefined) employeeUpdateFields.salary = salary;
+      if (hrNotes !== undefined) employeeUpdateFields.hrNotes = hrNotes;
+      if (backgroundCheckStatus !== undefined)
+        employeeUpdateFields.backgroundCheckStatus = backgroundCheckStatus;
+    }
+
+    // Check if there are any updates to make
+    if (
+      Object.keys(userUpdateFields).length === 0 &&
+      Object.keys(employeeUpdateFields).length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "No fields provided for update",
+      });
+    }
+
+    // Handle image upload if provided
+    const uploadedFile =
+      req.file ||
+      (req.files?.employeeImage && req.files.employeeImage[0]) ||
+      null;
+
+    if (uploadedFile) {
+      try {
+        const uploadResult = await uploadOnCloudinary(uploadedFile.path);
+
+        if (uploadResult?.secure_url) {
+          // Delete old image if it exists on Cloudinary
+          if (
+            employeeProfile.employeeImage &&
+            employeeProfile.employeeImage.includes("res.cloudinary.com")
+          ) {
+            const publicId = extractPublicId(employeeProfile.employeeImage);
+            if (publicId) {
+              try {
+                await deleteFromCloudinary(publicId);
+              } catch (err) {
+                console.warn("Failed to delete old image:", err.message);
+              }
+            }
+          }
+          employeeUpdateFields.employeeImage = uploadResult.secure_url;
+        }
+      } catch (err) {
+        console.error("Error uploading image to Cloudinary:", err);
+      }
+    }
+
+    // Update User model
+    let updatedUser = managerUser;
+    if (Object.keys(userUpdateFields).length > 0) {
+      updatedUser = await User.findByIdAndUpdate(
+        targetManagerId,
+        { $set: userUpdateFields },
+        { new: true, runValidators: true }
+      ).select("-password -account_pin");
+    }
+
+    // Update Employee Profile
+    let updatedEmployee = employeeProfile;
+    if (Object.keys(employeeUpdateFields).length > 0) {
+      employeeUpdateFields.updatedAt = new Date();
+      updatedEmployee = await Employee.findByIdAndUpdate(
+        employeeProfile._id,
+        { $set: employeeUpdateFields },
+        { new: true, runValidators: true }
+      );
+    }
+
+    // Track what was updated
+    const updatedFields = [
+      ...Object.keys(userUpdateFields),
+      ...Object.keys(employeeUpdateFields),
+    ];
+
+    return res.status(200).json({
+      success: true,
+      message: "Manager details updated successfully",
+      updated_fields: updatedFields,
+      data: {
+        _id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phone_number: updatedUser.phone_number,
+        is_active: updatedUser.is_active,
+        employee_id: updatedEmployee.employeeId,
+        photo: updatedEmployee.employeeImage,
+      },
+    });
+  } catch (error) {
+    console.error("Error updating manager details:", error);
+
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({
+        success: false,
+        message: `${field} already exists. Please use a different value.`,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+const getSupervisorDetails = async (req, res) => {
+  try {
+    const { supervisorId } = req.query;
+    const requestingUserId = req.user?.userId;
+
+    if (!requestingUserId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // Get requesting user to check role
+    const requestingUser = await User.findById(requestingUserId).select("role");
+    if (!requestingUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Requesting user not found",
+      });
+    }
+
+    // Only admin can view any supervisor, others can only view their own details
+    let targetSupervisorId = supervisorId;
+    if (!["admin"].includes(requestingUser.role)) {
+      // Non-admin users can only view their own details if they are a supervisor
+      if (requestingUser.role !== "supervisor") {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. Only admins and supervisors can access supervisor details.",
+        });
+      }
+      targetSupervisorId = requestingUserId; // Force to view own details
+    }
+
+    if (!targetSupervisorId) {
+      return res.status(400).json({
+        success: false,
+        message: "Supervisor ID is required",
+      });
+    }
+
+    // Fetch supervisor's user details with employee profile populated
+    const supervisorUser = await User.findById(targetSupervisorId)
+      .select("-password -account_pin")
+      .populate({
+        path: "employeeProfile",
+        populate: {
+          path: "reportingManager",
+          select: "employeeId employeeImage",
+        },
+      })
+      .lean();
+
+    if (!supervisorUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Supervisor not found",
+      });
+    }
+
+    if (supervisorUser.role !== "supervisor") {
+      return res.status(400).json({
+        success: false,
+        message: "User is not a supervisor",
+      });
+    }
+
+    // Get warehouse assignment for this supervisor
+    const employeeProfileId = supervisorUser.employeeProfile?._id;
+
+    const warehouse = await Warehouse.findOne({
+      $or: [{ supervisor_id: targetSupervisorId }, { supervisor_id: employeeProfileId }],
+    })
+      .select("_id name location capacity_quintal created_at")
+      .lean();
+
+    // Get reporting manager's user details if exists
+    let reportingManagerDetails = null;
+    if (supervisorUser.employeeProfile?.reportingManager) {
+      const reportingManagerProfile = await Employee.findById(
+        supervisorUser.employeeProfile.reportingManager
+      )
+        .populate({
+          path: "user",
+          select: "name phone_number email",
+        })
+        .lean();
+
+      if (reportingManagerProfile?.user) {
+        reportingManagerDetails = {
+          _id: reportingManagerProfile.user._id,
+          name: reportingManagerProfile.user.name,
+          phone: reportingManagerProfile.user.phone_number,
+          email: reportingManagerProfile.user.email,
+          employee_id: reportingManagerProfile.employeeId,
+          photo: reportingManagerProfile.employeeImage,
+        };
+      }
+    }
+
+    // Build comprehensive response
+    const response = {
+      // User Details
+      _id: supervisorUser._id,
+      name: supervisorUser.name,
+      phone_number: supervisorUser.phone_number,
+      secondary_phone_number: supervisorUser.secondary_phone_number,
+      email: supervisorUser.email,
+      gender: supervisorUser.gender,
+      dob: supervisorUser.dob,
+      role: supervisorUser.role,
+      is_active: supervisorUser.is_active ?? true,
+      registration_date: supervisorUser.registration_date,
+      step_completed: supervisorUser.step_completed,
+
+      // Employee Profile Details
+      employee_id: supervisorUser.employeeProfile?.employeeId || null,
+      employee_profile_id: supervisorUser.employeeProfile?._id || null,
+      photo: supervisorUser.employeeProfile?.employeeImage || null,
+
+      // Personal Info
+      marital_status: supervisorUser.employeeProfile?.maritalStatus || null,
+      nationality: supervisorUser.employeeProfile?.nationality || null,
+      blood_group: supervisorUser.employeeProfile?.bloodGroup || null,
+
+      // Address
+      permanent_address: supervisorUser.employeeProfile?.permanentAddress || null,
+      current_address: supervisorUser.employeeProfile?.currentAddress || null,
+      same_as_permanent: supervisorUser.employeeProfile?.sameAsPermanent || false,
+
+      // Employment Details
+      employment_type: supervisorUser.employeeProfile?.employmentType || null,
+      date_of_joining: supervisorUser.employeeProfile?.dateOfJoining || null,
+      employment_status: supervisorUser.employeeProfile?.employmentStatus || null,
+      salary: supervisorUser.employeeProfile?.salary || null,
+
+      // Bank Details
+      bank_details: {
+        account_number: supervisorUser.employeeProfile?.account_number || null,
+        ifsc_code: supervisorUser.employeeProfile?.ifsc_code || null,
+        account_holder: supervisorUser.employeeProfile?.account_holder || null,
+        bank_name: supervisorUser.employeeProfile?.bank_name || null,
+        branch_name: supervisorUser.employeeProfile?.branch_name || null,
+        upi_id: supervisorUser.employeeProfile?.upiId || null,
+      },
+
+      // Government IDs
+      govt_ids: {
+        pan_number: supervisorUser.employeeProfile?.panNumber || null,
+        aadhaar_number: supervisorUser.employeeProfile?.aadhaarNumber || null,
+        passport_number: supervisorUser.employeeProfile?.passportNumber || null,
+        passport_expiry: supervisorUser.employeeProfile?.passportExpiry || null,
+        pf_number: supervisorUser.employeeProfile?.pfNumber || null,
+        esi_number: supervisorUser.employeeProfile?.esiNumber || null,
+        tax_status: supervisorUser.employeeProfile?.taxStatus || null,
+      },
+
+      // Education & Experience
+      education: supervisorUser.employeeProfile?.education || [],
+      certifications: supervisorUser.employeeProfile?.certifications || [],
+      experience: supervisorUser.employeeProfile?.experience || [],
+      total_experience_years: supervisorUser.employeeProfile?.totalExperienceYears || 0,
+
+      // Skills & Additional
+      skills: supervisorUser.employeeProfile?.skills || [],
+      medical_conditions: supervisorUser.employeeProfile?.medicalConditions || null,
+      emergency_contacts: supervisorUser.employeeProfile?.emergencyContacts || [],
+      hr_notes: supervisorUser.employeeProfile?.hrNotes || null,
+      background_check_status: supervisorUser.employeeProfile?.backgroundCheckStatus || "Pending",
+      onboarding_completed: supervisorUser.employeeProfile?.onboardingCompleted || false,
+
+      // Reporting Manager
+      reporting_manager: reportingManagerDetails,
+
+      // Warehouse Assignment
+      is_engaged: !!warehouse,
+      warehouse: warehouse
+        ? {
+            _id: warehouse._id,
+            name: warehouse.name,
+            location: warehouse.location,
+            capacity_quintal: warehouse.capacity_quintal,
+            created_at: warehouse.created_at,
+          }
+        : null,
+
+      // Timestamps
+      created_at: supervisorUser.employeeProfile?.createdAt || supervisorUser.created_at,
+      updated_at: supervisorUser.employeeProfile?.updatedAt || supervisorUser.updated_at,
+    };
+
+    return res.status(200).json({
+      success: true,
+      message: "Supervisor details fetched successfully",
+      data: response,
+    });
+  } catch (error) {
+    console.error("Error fetching supervisor details:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+const updateSupervisorDetails = async (req, res) => {
+  try {
+    const { supervisorId } = req.query;
+    const requestingUserId = req.user?.userId;
+
+    if (!requestingUserId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // Get requesting user to check role
+    const requestingUser = await User.findById(requestingUserId).select("role");
+    if (!requestingUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Requesting user not found",
+      });
+    }
+
+    // Determine target supervisor ID based on role
+    let targetSupervisorId = supervisorId;
+    const isAdmin = requestingUser.role === "admin";
+
+    if (!isAdmin) {
+      // Non-admin can only update their own details if they are a supervisor
+      if (requestingUser.role !== "supervisor") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Only admins and supervisors can update supervisor details.",
+        });
+      }
+      targetSupervisorId = requestingUserId; // Force to update own details
+    }
+
+    if (!targetSupervisorId) {
+      return res.status(400).json({
+        success: false,
+        message: "Supervisor ID is required",
+      });
+    }
+
+    // Fetch supervisor user with employee profile
+    const supervisorUser = await User.findById(targetSupervisorId).populate("employeeProfile");
+    if (!supervisorUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Supervisor not found",
+      });
+    }
+
+    if (supervisorUser.role !== "supervisor") {
+      return res.status(400).json({
+        success: false,
+        message: "User is not a supervisor",
+      });
+    }
+
+    const employeeProfile = supervisorUser.employeeProfile;
+    if (!employeeProfile) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee profile not found for this supervisor",
+      });
+    }
+
+    // Extract fields from request body
+    const {
+      // User model fields
+      name,
+      phone_number,
+      secondary_phone_number,
+      email,
+      gender,
+      dob,
+      is_active,
+
+      // Employee Profile fields - Personal Info
+      maritalStatus,
+      nationality,
+      bloodGroup,
+
+      // Address
+      permanentAddress,
+      currentAddress,
+      sameAsPermanent,
+
+      // Employment
+      employmentType,
+      dateOfJoining,
+      employmentStatus,
+      salary,
+
+      // Bank Details
+      account_number,
+      ifsc_code,
+      account_holder,
+      bank_name,
+      branch_name,
+      upiId,
+
+      // Government IDs
+      panNumber,
+      aadhaarNumber,
+      passportNumber,
+      passportExpiry,
+      pfNumber,
+      esiNumber,
+      taxStatus,
+
+      // Skills & Additional
+      skills,
+      medicalConditions,
+      emergencyContacts,
+      hrNotes,
+      backgroundCheckStatus,
+    } = req.body;
+
+    // Build User update object (only changed fields)
+    const userUpdateFields = {};
+
+    if (name !== undefined) userUpdateFields.name = name;
+    if (secondary_phone_number !== undefined)
+      userUpdateFields.secondary_phone_number = secondary_phone_number;
+    if (gender !== undefined) userUpdateFields.gender = gender;
+    if (dob !== undefined) userUpdateFields.dob = dob;
+
+    // Admin-only fields
+    if (isAdmin) {
+      if (phone_number !== undefined) userUpdateFields.phone_number = phone_number;
+      if (email !== undefined) userUpdateFields.email = email;
+      if (is_active !== undefined) userUpdateFields.is_active = is_active;
+    }
+
+    // Build Employee Profile update object
+    const employeeUpdateFields = {};
+
+    // Fields supervisors can update themselves
+    if (maritalStatus !== undefined) employeeUpdateFields.maritalStatus = maritalStatus;
+    if (nationality !== undefined) employeeUpdateFields.nationality = nationality;
+    if (bloodGroup !== undefined) employeeUpdateFields.bloodGroup = bloodGroup;
+    if (permanentAddress !== undefined) employeeUpdateFields.permanentAddress = permanentAddress;
+    if (currentAddress !== undefined) employeeUpdateFields.currentAddress = currentAddress;
+    if (sameAsPermanent !== undefined) employeeUpdateFields.sameAsPermanent = sameAsPermanent;
+    if (skills !== undefined) employeeUpdateFields.skills = skills;
+    if (medicalConditions !== undefined) employeeUpdateFields.medicalConditions = medicalConditions;
+    if (emergencyContacts !== undefined) employeeUpdateFields.emergencyContacts = emergencyContacts;
+
+    // Bank details - self update allowed
+    if (account_number !== undefined) employeeUpdateFields.account_number = account_number;
+    if (ifsc_code !== undefined) employeeUpdateFields.ifsc_code = ifsc_code;
+    if (account_holder !== undefined) employeeUpdateFields.account_holder = account_holder;
+    if (bank_name !== undefined) employeeUpdateFields.bank_name = bank_name;
+    if (branch_name !== undefined) employeeUpdateFields.branch_name = branch_name;
+    if (upiId !== undefined) employeeUpdateFields.upiId = upiId;
+
+    // Government IDs - self update allowed
+    if (panNumber !== undefined) employeeUpdateFields.panNumber = panNumber;
+    if (aadhaarNumber !== undefined) employeeUpdateFields.aadhaarNumber = aadhaarNumber;
+    if (passportNumber !== undefined) employeeUpdateFields.passportNumber = passportNumber;
+    if (passportExpiry !== undefined) employeeUpdateFields.passportExpiry = new Date(passportExpiry);
+    if (pfNumber !== undefined) employeeUpdateFields.pfNumber = pfNumber;
+    if (esiNumber !== undefined) employeeUpdateFields.esiNumber = esiNumber;
+    if (taxStatus !== undefined) employeeUpdateFields.taxStatus = taxStatus;
+
+    // Admin-only employee fields
+    if (isAdmin) {
+      if (employmentType !== undefined) employeeUpdateFields.employmentType = employmentType;
+      if (dateOfJoining !== undefined) employeeUpdateFields.dateOfJoining = new Date(dateOfJoining);
+      if (employmentStatus !== undefined) employeeUpdateFields.employmentStatus = employmentStatus;
+      if (salary !== undefined) employeeUpdateFields.salary = salary;
+      if (hrNotes !== undefined) employeeUpdateFields.hrNotes = hrNotes;
+      if (backgroundCheckStatus !== undefined) employeeUpdateFields.backgroundCheckStatus = backgroundCheckStatus;
+    }
+
+    // Check if there are any updates to make
+    if (
+      Object.keys(userUpdateFields).length === 0 &&
+      Object.keys(employeeUpdateFields).length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "No fields provided for update",
+      });
+    }
+
+    // Handle image upload if provided
+    const uploadedFile =
+      req.file || (req.files?.employeeImage && req.files.employeeImage[0]) || null;
+
+    if (uploadedFile) {
+      try {
+        const uploadResult = await uploadOnCloudinary(uploadedFile.path);
+
+        if (uploadResult?.secure_url) {
+          // Delete old image if it exists on Cloudinary
+          if (
+            employeeProfile.employeeImage &&
+            employeeProfile.employeeImage.includes("res.cloudinary.com")
+          ) {
+            const publicId = extractPublicId(employeeProfile.employeeImage);
+            if (publicId) {
+              try {
+                await deleteFromCloudinary(publicId);
+              } catch (err) {
+                console.warn("Failed to delete old image:", err.message);
+              }
+            }
+          }
+          employeeUpdateFields.employeeImage = uploadResult.secure_url;
+        }
+      } catch (err) {
+        console.error("Error uploading image to Cloudinary:", err);
+      }
+    }
+
+    // Update User model
+    let updatedUser = supervisorUser;
+    if (Object.keys(userUpdateFields).length > 0) {
+      updatedUser = await User.findByIdAndUpdate(
+        targetSupervisorId,
+        { $set: userUpdateFields },
+        { new: true, runValidators: true }
+      ).select("-password -account_pin");
+    }
+
+    // Update Employee Profile
+    let updatedEmployee = employeeProfile;
+    if (Object.keys(employeeUpdateFields).length > 0) {
+      employeeUpdateFields.updatedAt = new Date();
+      updatedEmployee = await Employee.findByIdAndUpdate(
+        employeeProfile._id,
+        { $set: employeeUpdateFields },
+        { new: true, runValidators: true }
+      );
+    }
+
+    // Track what was updated
+    const updatedFields = [
+      ...Object.keys(userUpdateFields),
+      ...Object.keys(employeeUpdateFields),
+    ];
+
+    return res.status(200).json({
+      success: true,
+      message: "Supervisor details updated successfully",
+      updated_fields: updatedFields,
+      data: {
+        _id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phone_number: updatedUser.phone_number,
+        is_active: updatedUser.is_active,
+        employee_id: updatedEmployee.employeeId,
+        photo: updatedEmployee.employeeImage,
+      },
+    });
+  } catch (error) {
+    console.error("Error updating supervisor details:", error);
+
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({
+        success: false,
+        message: `${field} already exists. Please use a different value.`,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+const getStaffDetails = async (req, res) => {
+  try {
+    const { staffId } = req.query;
+    const requestingUserId = req.user?.userId;
+
+    if (!requestingUserId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // Get requesting user to check role
+    const requestingUser = await User.findById(requestingUserId).select("role");
+    if (!requestingUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Requesting user not found",
+      });
+    }
+
+    // Only admin can view any staff, others can only view their own details
+    let targetStaffId = staffId;
+    if (!["admin"].includes(requestingUser.role)) {
+      // Non-admin users can only view their own details if they are staff
+      if (requestingUser.role !== "staff") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Only admins and staff can access staff details.",
+        });
+      }
+      targetStaffId = requestingUserId; // Force to view own details
+    }
+
+    if (!targetStaffId) {
+      return res.status(400).json({
+        success: false,
+        message: "Staff ID is required",
+      });
+    }
+
+    // Fetch staff's user details with employee profile populated
+    const staffUser = await User.findById(targetStaffId)
+      .select("-password -account_pin")
+      .populate({
+        path: "employeeProfile",
+        populate: {
+          path: "reportingManager",
+          select: "employeeId employeeImage",
+        },
+      })
+      .lean();
+
+    if (!staffUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Staff not found",
+      });
+    }
+
+    if (staffUser.role !== "staff") {
+      return res.status(400).json({
+        success: false,
+        message: "User is not a staff member",
+      });
+    }
+
+    // Get warehouse assignment for this staff (staff_ids is an array)
+    const employeeProfileId = staffUser.employeeProfile?._id;
+
+    const warehouse = await Warehouse.findOne({
+      $or: [
+        { staff_ids: targetStaffId },
+        { staff_ids: employeeProfileId },
+      ],
+    })
+      .select("_id name location capacity_quintal created_at")
+      .lean();
+
+    // Get reporting manager's user details if exists
+    let reportingManagerDetails = null;
+    if (staffUser.employeeProfile?.reportingManager) {
+      const reportingManagerProfile = await Employee.findById(
+        staffUser.employeeProfile.reportingManager
+      )
+        .populate({
+          path: "user",
+          select: "name phone_number email",
+        })
+        .lean();
+
+      if (reportingManagerProfile?.user) {
+        reportingManagerDetails = {
+          _id: reportingManagerProfile.user._id,
+          name: reportingManagerProfile.user.name,
+          phone: reportingManagerProfile.user.phone_number,
+          email: reportingManagerProfile.user.email,
+          employee_id: reportingManagerProfile.employeeId,
+          photo: reportingManagerProfile.employeeImage,
+        };
+      }
+    }
+
+    // Build comprehensive response
+    const response = {
+      // User Details
+      _id: staffUser._id,
+      name: staffUser.name,
+      phone_number: staffUser.phone_number,
+      secondary_phone_number: staffUser.secondary_phone_number,
+      email: staffUser.email,
+      gender: staffUser.gender,
+      dob: staffUser.dob,
+      role: staffUser.role,
+      is_active: staffUser.is_active ?? true,
+      registration_date: staffUser.registration_date,
+      step_completed: staffUser.step_completed,
+
+      // Employee Profile Details
+      employee_id: staffUser.employeeProfile?.employeeId || null,
+      employee_profile_id: staffUser.employeeProfile?._id || null,
+      photo: staffUser.employeeProfile?.employeeImage || null,
+
+      // Personal Info
+      marital_status: staffUser.employeeProfile?.maritalStatus || null,
+      nationality: staffUser.employeeProfile?.nationality || null,
+      blood_group: staffUser.employeeProfile?.bloodGroup || null,
+
+      // Address
+      permanent_address: staffUser.employeeProfile?.permanentAddress || null,
+      current_address: staffUser.employeeProfile?.currentAddress || null,
+      same_as_permanent: staffUser.employeeProfile?.sameAsPermanent || false,
+
+      // Employment Details
+      employment_type: staffUser.employeeProfile?.employmentType || null,
+      date_of_joining: staffUser.employeeProfile?.dateOfJoining || null,
+      employment_status: staffUser.employeeProfile?.employmentStatus || null,
+      salary: staffUser.employeeProfile?.salary || null,
+
+      // Bank Details
+      bank_details: {
+        account_number: staffUser.employeeProfile?.account_number || null,
+        ifsc_code: staffUser.employeeProfile?.ifsc_code || null,
+        account_holder: staffUser.employeeProfile?.account_holder || null,
+        bank_name: staffUser.employeeProfile?.bank_name || null,
+        branch_name: staffUser.employeeProfile?.branch_name || null,
+        upi_id: staffUser.employeeProfile?.upiId || null,
+      },
+
+      // Government IDs
+      govt_ids: {
+        pan_number: staffUser.employeeProfile?.panNumber || null,
+        aadhaar_number: staffUser.employeeProfile?.aadhaarNumber || null,
+        passport_number: staffUser.employeeProfile?.passportNumber || null,
+        passport_expiry: staffUser.employeeProfile?.passportExpiry || null,
+        pf_number: staffUser.employeeProfile?.pfNumber || null,
+        esi_number: staffUser.employeeProfile?.esiNumber || null,
+        tax_status: staffUser.employeeProfile?.taxStatus || null,
+      },
+
+      // Education & Experience
+      education: staffUser.employeeProfile?.education || [],
+      certifications: staffUser.employeeProfile?.certifications || [],
+      experience: staffUser.employeeProfile?.experience || [],
+      total_experience_years: staffUser.employeeProfile?.totalExperienceYears || 0,
+
+      // Skills & Additional
+      skills: staffUser.employeeProfile?.skills || [],
+      medical_conditions: staffUser.employeeProfile?.medicalConditions || null,
+      emergency_contacts: staffUser.employeeProfile?.emergencyContacts || [],
+      hr_notes: staffUser.employeeProfile?.hrNotes || null,
+      background_check_status: staffUser.employeeProfile?.backgroundCheckStatus || "Pending",
+      onboarding_completed: staffUser.employeeProfile?.onboardingCompleted || false,
+
+      // Reporting Manager
+      reporting_manager: reportingManagerDetails,
+
+      // Warehouse Assignment
+      is_engaged: !!warehouse,
+      warehouse: warehouse
+        ? {
+            _id: warehouse._id,
+            name: warehouse.name,
+            location: warehouse.location,
+            capacity_quintal: warehouse.capacity_quintal,
+            created_at: warehouse.created_at,
+          }
+        : null,
+
+      // Timestamps
+      created_at: staffUser.employeeProfile?.createdAt || staffUser.created_at,
+      updated_at: staffUser.employeeProfile?.updatedAt || staffUser.updated_at,
+    };
+
+    return res.status(200).json({
+      success: true,
+      message: "Staff details fetched successfully",
+      data: response,
+    });
+  } catch (error) {
+    console.error("Error fetching staff details:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+const updateStaffDetails = async (req, res) => {
+  try {
+    const { staffId } = req.query;
+    const requestingUserId = req.user?.userId;
+
+    if (!requestingUserId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // Get requesting user to check role
+    const requestingUser = await User.findById(requestingUserId).select("role");
+    if (!requestingUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Requesting user not found",
+      });
+    }
+
+    // Determine target staff ID based on role
+    let targetStaffId = staffId;
+    const isAdmin = requestingUser.role === "admin";
+
+    if (!isAdmin) {
+      // Non-admin can only update their own details if they are staff
+      if (requestingUser.role !== "staff") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. Only admins and staff can update staff details.",
+        });
+      }
+      targetStaffId = requestingUserId; // Force to update own details
+    }
+
+    if (!targetStaffId) {
+      return res.status(400).json({
+        success: false,
+        message: "Staff ID is required",
+      });
+    }
+
+    // Fetch staff user with employee profile
+    const staffUser = await User.findById(targetStaffId).populate("employeeProfile");
+    if (!staffUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Staff not found",
+      });
+    }
+
+    if (staffUser.role !== "staff") {
+      return res.status(400).json({
+        success: false,
+        message: "User is not a staff member",
+      });
+    }
+
+    const employeeProfile = staffUser.employeeProfile;
+    if (!employeeProfile) {
+      return res.status(404).json({
+        success: false,
+        message: "Employee profile not found for this staff",
+      });
+    }
+
+    // Extract fields from request body
+    const {
+      // User model fields
+      name,
+      phone_number,
+      secondary_phone_number,
+      email,
+      gender,
+      dob,
+      is_active,
+
+      // Employee Profile fields - Personal Info
+      maritalStatus,
+      nationality,
+      bloodGroup,
+
+      // Address
+      permanentAddress,
+      currentAddress,
+      sameAsPermanent,
+
+      // Employment
+      employmentType,
+      dateOfJoining,
+      employmentStatus,
+      salary,
+
+      // Bank Details
+      account_number,
+      ifsc_code,
+      account_holder,
+      bank_name,
+      branch_name,
+      upiId,
+
+      // Government IDs
+      panNumber,
+      aadhaarNumber,
+      passportNumber,
+      passportExpiry,
+      pfNumber,
+      esiNumber,
+      taxStatus,
+
+      // Skills & Additional
+      skills,
+      medicalConditions,
+      emergencyContacts,
+      hrNotes,
+      backgroundCheckStatus,
+    } = req.body;
+
+    // Build User update object (only changed fields)
+    const userUpdateFields = {};
+
+    if (name !== undefined) userUpdateFields.name = name;
+    if (secondary_phone_number !== undefined)
+      userUpdateFields.secondary_phone_number = secondary_phone_number;
+    if (gender !== undefined) userUpdateFields.gender = gender;
+    if (dob !== undefined) userUpdateFields.dob = dob;
+
+    // Admin-only fields
+    if (isAdmin) {
+      if (phone_number !== undefined) userUpdateFields.phone_number = phone_number;
+      if (email !== undefined) userUpdateFields.email = email;
+      if (is_active !== undefined) userUpdateFields.is_active = is_active;
+    }
+
+    // Build Employee Profile update object
+    const employeeUpdateFields = {};
+
+    // Fields staff can update themselves
+    if (maritalStatus !== undefined) employeeUpdateFields.maritalStatus = maritalStatus;
+    if (nationality !== undefined) employeeUpdateFields.nationality = nationality;
+    if (bloodGroup !== undefined) employeeUpdateFields.bloodGroup = bloodGroup;
+    if (permanentAddress !== undefined) employeeUpdateFields.permanentAddress = permanentAddress;
+    if (currentAddress !== undefined) employeeUpdateFields.currentAddress = currentAddress;
+    if (sameAsPermanent !== undefined) employeeUpdateFields.sameAsPermanent = sameAsPermanent;
+    if (skills !== undefined) employeeUpdateFields.skills = skills;
+    if (medicalConditions !== undefined) employeeUpdateFields.medicalConditions = medicalConditions;
+    if (emergencyContacts !== undefined) employeeUpdateFields.emergencyContacts = emergencyContacts;
+
+    // Bank details - self update allowed
+    if (account_number !== undefined) employeeUpdateFields.account_number = account_number;
+    if (ifsc_code !== undefined) employeeUpdateFields.ifsc_code = ifsc_code;
+    if (account_holder !== undefined) employeeUpdateFields.account_holder = account_holder;
+    if (bank_name !== undefined) employeeUpdateFields.bank_name = bank_name;
+    if (branch_name !== undefined) employeeUpdateFields.branch_name = branch_name;
+    if (upiId !== undefined) employeeUpdateFields.upiId = upiId;
+
+    // Government IDs - self update allowed
+    if (panNumber !== undefined) employeeUpdateFields.panNumber = panNumber;
+    if (aadhaarNumber !== undefined) employeeUpdateFields.aadhaarNumber = aadhaarNumber;
+    if (passportNumber !== undefined) employeeUpdateFields.passportNumber = passportNumber;
+    if (passportExpiry !== undefined) employeeUpdateFields.passportExpiry = new Date(passportExpiry);
+    if (pfNumber !== undefined) employeeUpdateFields.pfNumber = pfNumber;
+    if (esiNumber !== undefined) employeeUpdateFields.esiNumber = esiNumber;
+    if (taxStatus !== undefined) employeeUpdateFields.taxStatus = taxStatus;
+
+    // Admin-only employee fields
+    if (isAdmin) {
+      if (employmentType !== undefined) employeeUpdateFields.employmentType = employmentType;
+      if (dateOfJoining !== undefined) employeeUpdateFields.dateOfJoining = new Date(dateOfJoining);
+      if (employmentStatus !== undefined) employeeUpdateFields.employmentStatus = employmentStatus;
+      if (salary !== undefined) employeeUpdateFields.salary = salary;
+      if (hrNotes !== undefined) employeeUpdateFields.hrNotes = hrNotes;
+      if (backgroundCheckStatus !== undefined) employeeUpdateFields.backgroundCheckStatus = backgroundCheckStatus;
+    }
+
+    // Check if there are any updates to make
+    if (
+      Object.keys(userUpdateFields).length === 0 &&
+      Object.keys(employeeUpdateFields).length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "No fields provided for update",
+      });
+    }
+
+    // Handle image upload if provided
+    const uploadedFile =
+      req.file || (req.files?.employeeImage && req.files.employeeImage[0]) || null;
+
+    if (uploadedFile) {
+      try {
+        const uploadResult = await uploadOnCloudinary(uploadedFile.path);
+
+        if (uploadResult?.secure_url) {
+          // Delete old image if it exists on Cloudinary
+          if (
+            employeeProfile.employeeImage &&
+            employeeProfile.employeeImage.includes("res.cloudinary.com")
+          ) {
+            const publicId = extractPublicId(employeeProfile.employeeImage);
+            if (publicId) {
+              try {
+                await deleteFromCloudinary(publicId);
+              } catch (err) {
+                console.warn("Failed to delete old image:", err.message);
+              }
+            }
+          }
+          employeeUpdateFields.employeeImage = uploadResult.secure_url;
+        }
+      } catch (err) {
+        console.error("Error uploading image to Cloudinary:", err);
+      }
+    }
+
+    // Update User model
+    let updatedUser = staffUser;
+    if (Object.keys(userUpdateFields).length > 0) {
+      updatedUser = await User.findByIdAndUpdate(
+        targetStaffId,
+        { $set: userUpdateFields },
+        { new: true, runValidators: true }
+      ).select("-password -account_pin");
+    }
+
+    // Update Employee Profile
+    let updatedEmployee = employeeProfile;
+    if (Object.keys(employeeUpdateFields).length > 0) {
+      employeeUpdateFields.updatedAt = new Date();
+      updatedEmployee = await Employee.findByIdAndUpdate(
+        employeeProfile._id,
+        { $set: employeeUpdateFields },
+        { new: true, runValidators: true }
+      );
+    }
+
+    // Track what was updated
+    const updatedFields = [
+      ...Object.keys(userUpdateFields),
+      ...Object.keys(employeeUpdateFields),
+    ];
+
+    return res.status(200).json({
+      success: true,
+      message: "Staff details updated successfully",
+      updated_fields: updatedFields,
+      data: {
+        _id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phone_number: updatedUser.phone_number,
+        is_active: updatedUser.is_active,
+        employee_id: updatedEmployee.employeeId,
+        photo: updatedEmployee.employeeImage,
+      },
+    });
+  } catch (error) {
+    console.error("Error updating staff details:", error);
+
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({
+        success: false,
+        message: `${field} already exists. Please use a different value.`,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
 export {
   employee_onboarding_step_1,
   employee_onboarding_step_2,
@@ -657,4 +2143,10 @@ export {
   employee_onboarding_step_5,
   employee_onboarding_step_6,
   employee_onboarding_step_7,
+  getManagerDetails,
+  updateManagerDetails,
+  getSupervisorDetails,
+  updateSupervisorDetails,
+  getStaffDetails,
+  updateStaffDetails,
 };

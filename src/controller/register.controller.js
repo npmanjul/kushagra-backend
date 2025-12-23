@@ -29,6 +29,44 @@ const registerStep1 = async (req, res) => {
 
     const farmerId = await generateFarmerId();
 
+    const verificationFields= {
+      overallStatus: "pending",
+      aadhaar_number: { status: "pending" },
+      pan_number: { status: "pending" },
+      aadhaar_image: { status: "pending" },
+      pan_image: { status: "pending" },
+      khatauni_images: { status: "pending" },
+      // -----------------------------
+      address: { status: "pending" },
+      tehsil: { status: "pending" },
+      district: { status: "pending" },
+      state: { status: "pending" },
+      landmark: { status: "pending" },
+      pin_code: { status: "pending" },
+      // -----------------------------
+      land_size: { status: "pending" },
+      // -----------------------------
+      account_number: { status: "pending" },
+      ifsc_code: { status: "pending" },
+      account_holder: { status: "pending" },
+      bank_name: { status: "pending" },
+      branch_name: { status: "pending" },
+      bank_passbook_img: { status: "pending" },
+      // -----------------------------
+      nominee_name: { status: "pending" },
+      nominee_dob: { status: "pending" },
+      nominee_phone: { status: "pending" },
+      nominee_email: { status: "pending" },
+      nominee_aadhaar: { status: "pending" },
+      nominee_pan: { status: "pending" },
+      nominee_relation: { status: "pending" },
+      nominee_gender: { status: "pending" },
+      nominee_address: { status: "pending" },
+      nominee_image: { status: "pending" },
+      nominee_aadhaar_image: { status: "pending" },
+      nominee_pan_image: { status: "pending" },
+    };
+
     // Create user
     const newUser = await User.create({
       name,
@@ -39,6 +77,7 @@ const registerStep1 = async (req, res) => {
       gender,
       dob,
       step_completed: 1,
+      farmerVerification: verificationFields,
     });
 
     // Create farmer profile linked to this user
@@ -362,7 +401,8 @@ const registerStep5 = async (req, res) => {
     const userId = req.user.userId;
 
     // destructure uploaded files
-    const { nominee_image, nominee_aadhaar_image, nominee_pan_image } = req.files || {};
+    const { nominee_image, nominee_aadhaar_image, nominee_pan_image } =
+      req.files || {};
 
     // Find farmer profile linked to this user
     const farmerProfile = await Farmer.findOne({ user: userId }).select(
@@ -442,7 +482,9 @@ const registerStep5 = async (req, res) => {
     });
   } catch (error) {
     console.error("Step 5 Error:", error);
-    return res.status(500).json({ message: "Internal server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Internal server error", error: error.message });
   }
 };
 
@@ -487,7 +529,9 @@ const registerStep6 = async (req, res) => {
     });
   } catch (error) {
     console.error("Step 6 Error:", error);
-    return res.status(500).json({ message: "Internal server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Internal server error", error: error.message });
   }
 };
 

@@ -9,6 +9,7 @@ const warehouseSchema = new Schema({
   supervisor_id: { type: mongoose.Schema.Types.ObjectId, ref: "EmployeeProfile" },
   staff_ids: [{ type: mongoose.Schema.Types.ObjectId, ref: "EmployeeProfile" }],
   created_at: { type: Date, default: Date.now },
+  updated_at: { type: Date, default: Date.now },
 });
 
-export default mongoose.model("Warehouse", warehouseSchema);
+export default mongoose.model("Warehouses", warehouseSchema);

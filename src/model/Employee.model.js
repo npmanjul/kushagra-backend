@@ -94,7 +94,7 @@ const EmployeeProfileSchema = new Schema(
     
     // -------- Salary & Bank --------
     salary: Number,
-    account_number: { type: String, unique: true, sparse: true },
+    account_number: String,
     ifsc_code: String,
     account_holder: String,
     bank_name: String,
@@ -102,12 +102,12 @@ const EmployeeProfileSchema = new Schema(
     upiId: String,
 
     // Govt IDs
-    panNumber: { type: String, unique: true, sparse: true },
-    aadhaarNumber: { type: String, unique: true, sparse: true },
-    passportNumber: { type: String, unique: true, sparse: true },
+    panNumber: String,
+    aadhaarNumber: String,
+    passportNumber: String,
     passportExpiry: Date,
-    pfNumber: { type: String, unique: true, sparse: true },
-    esiNumber: { type: String, unique: true, sparse: true },
+    pfNumber: String,
+    esiNumber: String,
     taxStatus: String,
 
     // -------- Step 5: Education --------

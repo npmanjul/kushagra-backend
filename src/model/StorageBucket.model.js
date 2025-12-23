@@ -24,6 +24,7 @@ const storageBucketSchema = new Schema({
       }],
       pending_quantity: { type: Number, default: 0 },
       total_quantity: { type: Number, default: 0 },
+      hold_quantity: { type: Number, default: 0 },
     },
   ],
   created_at: { type: Date, default: Date.now },

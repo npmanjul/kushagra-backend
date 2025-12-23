@@ -99,11 +99,11 @@ const pinVerification = async (req, res) => {
 
 const getProfile = async (req, res) => {
   try {
-    const userId = req.user.userId;
+    const userId = req.user?.userId;
 
     // Fetch basic user details
     const user = await User.findById(userId).select(
-      "name phone_number email role isVerified"
+      "name phone_number email role is_active farmerVerification.overallStatus"
     );
 
     if (!user) {
@@ -244,11 +244,66 @@ const resetPin = async (req, res) => {
   }
 };
 
+const getCompleteProfile = async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+
+    // Fetch basic user details
+    const user = await User.findById(userId).select(
+      "name phone_number secondary_phone_number email gender dob role is_active registration_date step_completed farmerVerification"
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    let profileData = null;
+
+    // If user is a farmer, fetch complete details from Farmer model
+    if (user.role === "farmer") {
+      profileData = await Farmer.findOne({ user: userId }).select(
+        "farmerId user_image address tehsil district state landmark pin_code aadhaar_number pan_number aadhaar_image pan_image khatauni_images land_size account_number ifsc_code account_holder bank_name branch_name bank_passbook_img nominee_name nominee_dob nominee_phone nominee_email nominee_aadhaar nominee_pan nominee_relation nominee_gender nominee_address nominee_image nominee_aadhaar_image nominee_pan_image"
+      );
+    }
+
+    // If user is admin, manager, supervisor, or staff, fetch complete details from Employee model
+    if (["admin", "manager", "supervisor", "staff"].includes(user.role)) {
+      profileData = await Employee.findOne({ user: userId })
+        .select(
+          "employeeId employeeImage maritalStatus nationality bloodGroup permanentAddress currentAddress sameAsPermanent employmentType dateOfJoining employmentStatus isActive salary account_number ifsc_code account_holder bank_name branch_name upiId panNumber aadhaarNumber passportNumber passportExpiry pfNumber esiNumber taxStatus education certifications experience totalExperienceYears skills medicalConditions emergencyContacts hrNotes backgroundCheckStatus onboardingCompleted"
+        )
+        .populate("reportingManager", "employeeId user")
+        .populate({
+          path: "reportingManager",
+          populate: {
+            path: "user",
+            select: "name email phone_number role",
+          },
+        });
+    }
+
+    const profile = {
+      ...user.toObject(),
+      ...(profileData ? profileData.toObject() : {}),
+    };
+
+    return res.status(200).json({ 
+      success: true, 
+      message: "Profile fetched successfully",
+      profile 
+    });
+  } catch (error) {
+    console.error("Error fetching complete profile:", error);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
 export {
   login,
   checkToken,
   pinVerification,
   getProfile,
+  getCompleteProfile,
   sendOTP,
   verifyOTP,
   resetPassword,

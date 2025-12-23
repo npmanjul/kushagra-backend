@@ -1,9 +1,12 @@
 import { Router } from "express";
-import { userAllTransactions } from "../controller/transaction.controller.js";
+import { allTransactions, userAllTransactions } from "../controller/transaction.controller.js";
 import authMiddleware from "../middleware/authmiddleware.js";
 
 const router = Router();
 
-router.route("/getalltransactions").get(authMiddleware,userAllTransactions);
+router.route("/getallusertransactions").get(authMiddleware,userAllTransactions);
+
+router.route("/getalltransactions").get(authMiddleware,allTransactions);
+
 
 export default router;
