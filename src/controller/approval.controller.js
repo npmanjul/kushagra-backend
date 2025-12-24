@@ -507,7 +507,7 @@ const action_deposite_approvals = async (req, res) => {
         .json({ message: "Only deposit transactions allowed here" });
     }
 
-    if (["completed", "Rejected"].includes(transaction.transaction_status)) {
+    if (["completed", "rejected"].includes(transaction.transaction_status)) {
       return res.status(400).json({
         message: `Transaction already ${transaction.transaction_status}`,
       });
@@ -765,7 +765,7 @@ const action_deposite_approvals = async (req, res) => {
         };
         await approval.save();
 
-        transaction.transaction_status = "Rejected";
+        transaction.transaction_status = "rejected";
         await transaction.save();
 
         return res
@@ -812,7 +812,7 @@ const action_deposite_approvals = async (req, res) => {
         };
         await approval.save();
 
-        transaction.transaction_status = "Rejected";
+        transaction.transaction_status = "rejected";
         await transaction.save();
 
         // ✅ Only remove from USER's pending if supervisor had added it
@@ -871,7 +871,7 @@ const action_deposite_approvals = async (req, res) => {
         };
         await approval.save();
 
-        transaction.transaction_status = "Rejected";
+        transaction.transaction_status = "rejected";
         await transaction.save();
 
         // ✅ Check if there's pending quantity to remove from USER's account
