@@ -4,7 +4,7 @@ import path from "path";
 // Multer storage configuration
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, path.resolve("uploads/"));
+    cb(null, path.resolve("/"));
   },
   filename: function (req, file, cb) {
     // FIX: Remove [] from fieldname to avoid ENOENT
