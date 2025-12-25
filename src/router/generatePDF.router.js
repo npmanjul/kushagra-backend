@@ -1,5 +1,5 @@
 import { Router } from "express";
-import generatePDF from "../controller/generatePDF.controller.js";
+import generatePDF from "../controller/generatePDF.controller";
 
 const router = Router();
 

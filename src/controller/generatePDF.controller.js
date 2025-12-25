@@ -6,56 +6,38 @@ import {
   transactionReportTemplate
 } from "../utils/PDFTemplates.js";
 
-const generatePDF = async (req, res) => {
+export default async function generatePDF(req, res) {
   try {
-    const received = JSON.parse(req.body.data);
+    const parsed = JSON.parse(req.body?.data || "{}");
     const service = req.params.service;
-
     let templateHTML;
 
-    if (service === "transactions") {
-      templateHTML = transactionReportTemplate(received);
-    } else if (service === "profile") {
-      templateHTML = employeeProfileTemplate(received);
-    } else if (service === "usertransaction") {
-      templateHTML = transactionInvoiceTemplate(received);
-    }
+    if (service === "transactions") templateHTML = transactionReportTemplate(parsed);
+    else if (service === "profile") templateHTML = employeeProfileTemplate(parsed);
+    else if (service === "usertransaction") templateHTML = transactionInvoiceTemplate(parsed);
+    else return res.status(400).send("Invalid service type");
 
-    /** ------------------ THIS FIX IS IMPORTANT ------------------ **/
-    const executablePath = await chromium.executablePath();
-
+    /** --- FIX PART: VERCEL CHROMIUM LAUNCH --- */
     const browser = await puppeteer.launch({
       args: chromium.args,
-      executablePath, // Chrome from @sparticuz/chromium
-      headless: chromium.headless,
+      executablePath: await chromium.executablePath(),   // <— MUST BE THIS
+      headless: true,
       defaultViewport: chromium.defaultViewport,
     });
 
     const page = await browser.newPage();
     await page.setContent(templateHTML, { waitUntil: "networkidle0" });
 
-    const pdfBuffer = await page.pdf({
-      format: "A4",
-      printBackground: true,
-    });
-
+    const pdfBuffer = await page.pdf({ format: "A4", printBackground: true });
     await browser.close();
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=${received.name}-${service}.pdf`
-    );
-
+    res.setHeader("Content-Disposition", `attachment; filename=${parsed.name}-${service}.pdf`);
     return res.send(pdfBuffer);
 
   } catch (error) {
-    console.error("Error generating PDF:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed generating PDF"
-    });
+    console.error("PDF ERROR >>", error);
+    return res.status(500).json({ error: true, message: error.message });
   }
-};
+}
 
-export default generatePDF;
