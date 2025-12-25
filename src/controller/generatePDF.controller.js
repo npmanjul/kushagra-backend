@@ -1,31 +1,26 @@
-import chromium from "chrome-aws-lambda";
+import chromium from "@sparticuz/chromium";
 import puppeteer from "puppeteer-core";
 import { employeeProfileTemplate, transactionInvoiceTemplate, transactionReportTemplate } from "../utils/PDFTemplates.js";
 
-
-export const generatePDF = async (req, res) => {
+const generatePDF = async (req, res) => {
   try {
-    const data = req.body;
+    const { data } = req.body;
     const service = req.params.service;
-
     let templateHTML;
 
     if (service === "transactions") {
-      templateHTML = transactionReportTemplate(JSON.parse(data.data));
+      templateHTML = transactionReportTemplate(JSON.parse(data));
     } else if (service === "profile") {
-      templateHTML = employeeProfileTemplate(JSON.parse(data.data));
+      templateHTML = employeeProfileTemplate(JSON.parse(data));
     } else if (service === "usertransaction") {
-      templateHTML = transactionInvoiceTemplate(JSON.parse(data.data));
+      templateHTML = transactionInvoiceTemplate(JSON.parse(data));
     }
 
-    // Launch chrome in Vercel-compatible mode
+    // 🔥 Launch Chromium compatible with Vercel
     const browser = await puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
-      executablePath:
-        process.env.NODE_ENV === "production"
-          ? await chromium.executablePath
-          : "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", // local dev
+      executablePath: await chromium.executablePath(),
       headless: chromium.headless,
     });
 
@@ -39,20 +34,18 @@ export const generatePDF = async (req, res) => {
 
     await browser.close();
 
-    // Headers
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=${data.name}-${service}.pdf`
+      `attachment; filename=${JSON.parse(data).name}-${service}.pdf`
     );
 
     return res.send(pdfBuffer);
+
   } catch (error) {
-    console.error("PDF Generation Error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error while generating PDF",
-      error: error.toString(),
-    });
+    console.error("PDF ERROR:", error);
+    return res.status(500).json({ message: "Server error while generating PDF" });
   }
 };
+
+export default generatePDF;
