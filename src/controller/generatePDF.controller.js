@@ -1,33 +1,36 @@
-import puppeteer from "puppeteer";
+import chromium from "chrome-aws-lambda";
+import puppeteer from "puppeteer-core";
 import { employeeProfileTemplate, transactionInvoiceTemplate, transactionReportTemplate } from "../utils/PDFTemplates.js";
 
-const generatePDF = async (req, res) => {
-  try {
-    const data= req.body;
-    const service = req.params.service;
 
-    // console.log("Generating PDF for service:",data, service);
+export const generatePDF = async (req, res) => {
+  try {
+    const data = req.body;
+    const service = req.params.service;
 
     let templateHTML;
 
-    if(service === "transactions"){
+    if (service === "transactions") {
       templateHTML = transactionReportTemplate(JSON.parse(data.data));
-    }else if (service === "profile") {
+    } else if (service === "profile") {
       templateHTML = employeeProfileTemplate(JSON.parse(data.data));
-    }else if (service === "usertransaction") {
+    } else if (service === "usertransaction") {
       templateHTML = transactionInvoiceTemplate(JSON.parse(data.data));
     }
 
-
+    // Launch chrome in Vercel-compatible mode
     const browser = await puppeteer.launch({
-      headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath:
+        process.env.NODE_ENV === "production"
+          ? await chromium.executablePath
+          : "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", // local dev
+      headless: chromium.headless,
     });
 
     const page = await browser.newPage();
-    await page.setContent(templateHTML, {
-      waitUntil: "networkidle0",
-    });
+    await page.setContent(templateHTML, { waitUntil: "networkidle0" });
 
     const pdfBuffer = await page.pdf({
       format: "A4",
@@ -36,7 +39,7 @@ const generatePDF = async (req, res) => {
 
     await browser.close();
 
-    // ✅ CORRECT HEADERS
+    // Headers
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
@@ -45,12 +48,11 @@ const generatePDF = async (req, res) => {
 
     return res.send(pdfBuffer);
   } catch (error) {
-    console.error("Error generating PDF:", error);
+    console.error("PDF Generation Error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error while generating PDF",
+      error: error.toString(),
     });
   }
 };
-
-export default generatePDF;
