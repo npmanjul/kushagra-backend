@@ -122,7 +122,19 @@ const userAllTransactions = async (req, res) => {
 
 const allTransactions = async (req, res) => {
   try {
-    const { transaction_type, page = 1, limit = 10 } = req.query;
+    const { 
+      transaction_type, 
+      page = 1, 
+      limit = 10,
+      start_date,
+      end_date,
+      status,
+      search,
+      min_amount,
+      max_amount,
+      grain_type,
+      warehouse_id
+    } = req.query;
 
     const userId = req.user?.userId;
     if (!userId) {
@@ -149,6 +161,7 @@ const allTransactions = async (req, res) => {
     // -----------------------------
     const filter = {};
 
+    // Transaction type filter
     if (transaction_type) {
       if (!allowedTypes.includes(transaction_type)) {
         return res.status(400).json({
@@ -157,6 +170,43 @@ const allTransactions = async (req, res) => {
         });
       }
       filter.transaction_type = transaction_type;
+    }
+
+    // Date range filter
+    if (start_date || end_date) {
+      filter.transaction_date = {};
+      if (start_date) {
+        filter.transaction_date.$gte = new Date(start_date);
+      }
+      if (end_date) {
+        const endDate = new Date(end_date);
+        endDate.setHours(23, 59, 59, 999);
+        filter.transaction_date.$lte = endDate;
+      }
+    }
+
+    // Amount range filter
+    if (min_amount || max_amount) {
+      filter.total_amount = {};
+      if (min_amount) {
+        filter.total_amount.$gte = parseFloat(min_amount);
+      }
+      if (max_amount) {
+        filter.total_amount.$lte = parseFloat(max_amount);
+      }
+    }
+
+    // Status filter
+    if (status) {
+      const allowedStatuses = ["pending", "approved", "rejected"];
+      if (allowedStatuses.includes(status)) {
+        filter.status = status;
+      }
+    }
+
+    // Grain type filter
+    if (grain_type) {
+      filter["grain.grain_type"] = { $regex: grain_type, $options: "i" };
     }
 
     let warehouseDetails ;
@@ -183,6 +233,45 @@ const allTransactions = async (req, res) => {
 
       // Restrict transactions to this warehouse
       filter.warehouse_id = warehouse._id;
+    } else if (userRole === "admin" && warehouse_id) {
+      // Admin can filter by specific warehouse
+      filter.warehouse_id = warehouse_id;
+    }
+
+    // -----------------------------
+    // Search filter (user name, phone, email)
+    // -----------------------------
+    let userSearchIds = [];
+    if (search) {
+      const searchRegex = { $regex: search, $options: "i" };
+      const matchedUsers = await User.find({
+        $or: [
+          { name: searchRegex },
+          { phone_number: searchRegex },
+          { email: searchRegex },
+        ],
+      }).select("_id").lean();
+      
+      userSearchIds = matchedUsers.map(u => u._id);
+      if (userSearchIds.length > 0) {
+        filter.user_id = { $in: userSearchIds };
+      } else {
+        // No users matched, return empty result
+        return res.status(200).json({
+          success: true,
+          role: userRole,
+          pagination: {
+            currentPage: parseInt(page),
+            limit: parseInt(limit),
+            totalRecords: 0,
+            totalPages: 0,
+          },
+          transactionCounts: { sell: 0, deposit: 0, withdraw: 0, loan: 0 },
+          warehouse: warehouseDetails || "All Warehouses",
+          filters: req.query,
+          data: [],
+        });
+      }
     }
 
     // -----------------------------
@@ -270,6 +359,14 @@ const allTransactions = async (req, res) => {
       },
       transactionCounts,
       warehouse: warehouseDetails? warehouseDetails : "All Warehouses",
+      filters: {
+        transaction_type: transaction_type || "all",
+        date_range: start_date || end_date ? { start_date, end_date } : "all",
+        status: status || "all",
+        search: search || null,
+        amount_range: min_amount || max_amount ? { min_amount, max_amount } : "all",
+        grain_type: grain_type || "all",
+      },
       data: transactions,
     });
 
@@ -281,4 +378,5 @@ const allTransactions = async (req, res) => {
     });
   }
 };
+
 export { userAllTransactions, allTransactions };

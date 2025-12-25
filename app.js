@@ -31,6 +31,7 @@ import approvalRouter from "./src/router/approval.router.js";
 import employeeRouter from "./src/router/employee.router.js";
 import withdrawalRouter from "./src/router/withdrawal.router.js";
 import overviewRouter from "./src/router/overview.router.js";
+import generatePDFRouter from "./src/router/generatePDF.router.js";
 
 // Routes
 app.use(`${BACKEND_URL}/auth`, authRoutes);
@@ -47,6 +48,8 @@ app.use(`${BACKEND_URL}/approval`, approvalRouter);
 app.use(`${BACKEND_URL}/employee`, employeeRouter);
 app.use(`${BACKEND_URL}/withdrawal`, withdrawalRouter);
 app.use(`${BACKEND_URL}/overview`, overviewRouter);
+app.use(`${BACKEND_URL}/generatepdf`, generatePDFRouter);
+
 
 app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
