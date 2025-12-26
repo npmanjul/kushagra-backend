@@ -768,6 +768,8 @@ const action_deposite_approvals = async (req, res) => {
         transaction.transaction_status = "rejected";
         await transaction.save();
 
+        // ✅ No need to remove from pending as supervisor hadn't added anything yet
+
         return res
           .status(200)
           .json({ message: "Supervisor rejected the transaction" });
@@ -815,7 +817,8 @@ const action_deposite_approvals = async (req, res) => {
         transaction.transaction_status = "rejected";
         await transaction.save();
 
-        // ✅ Only remove from USER's pending if supervisor had added it
+        // ✅ Remove from USER's pending if supervisor had already approved and added it
+        // (Supervisor approval adds to pending_quantity, so we need to remove it on manager rejection)
         if (approval.supervisor_approval?.status) {
           await removeFromPendingQuantity();
         }
@@ -874,13 +877,14 @@ const action_deposite_approvals = async (req, res) => {
         transaction.transaction_status = "rejected";
         await transaction.save();
 
-        // ✅ Check if there's pending quantity to remove from USER's account
+        // ✅ Remove from pending_quantity if supervisor OR manager had approved
+        // (Either supervisor or manager would have added to pending_quantity on their approval)
         const hasLowerApproval = 
           approval.supervisor_approval?.status || 
           approval.manager_approval?.status;
 
         if (hasLowerApproval) {
-          // Remove from USER's pending (it was added by supervisor/manager)
+          // Remove from USER's pending since admin rejected
           await removeFromPendingQuantity();
         }
 

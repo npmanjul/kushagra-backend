@@ -2,6 +2,8 @@ import Warehouse from "../model/Warehouses.model.js";
 import User from "../model/Users.model.js";
 import StorageBucket from "../model/StorageBucket.model.js";
 import EmployeeProfile from "../model/Employee.model.js";
+import TransactionHistory from "../model/Transaction.model.js";
+import mongoose from "mongoose";
 
 const createWarehouse = async (req, res) => {
   try {
@@ -67,7 +69,7 @@ const getAllManager = async (req, res) => {
     // manager_id in Warehouse could be User._id or EmployeeProfile._id
     const warehouseMapByUserId = {};
     const warehouseMapByEmployeeProfileId = {};
-    
+
     allWarehouses.forEach((warehouse) => {
       if (warehouse.manager_id) {
         const managerId = warehouse.manager_id.toString();
@@ -86,10 +88,13 @@ const getAllManager = async (req, res) => {
     const managersWithDetails = allManagers.map((manager) => {
       const userId = manager._id.toString();
       const employeeProfileId = manager.employeeProfile?._id?.toString();
-      
+
       // Try to find warehouse by User._id first, then by EmployeeProfile._id
-      const warehouseInfo = warehouseMapByUserId[userId] || 
-        (employeeProfileId ? warehouseMapByEmployeeProfileId[employeeProfileId] : null);
+      const warehouseInfo =
+        warehouseMapByUserId[userId] ||
+        (employeeProfileId
+          ? warehouseMapByEmployeeProfileId[employeeProfileId]
+          : null);
 
       return {
         _id: manager._id,
@@ -141,7 +146,7 @@ const getAllSupervisor = async (req, res) => {
     // supervisor_id in Warehouse could be User._id or EmployeeProfile._id
     const warehouseMapByUserId = {};
     const warehouseMapByEmployeeProfileId = {};
-    
+
     allWarehouses.forEach((warehouse) => {
       if (warehouse.supervisor_id) {
         const supervisorId = warehouse.supervisor_id.toString();
@@ -160,10 +165,13 @@ const getAllSupervisor = async (req, res) => {
     const supervisorsWithDetails = allSupervisors.map((supervisor) => {
       const userId = supervisor._id.toString();
       const employeeProfileId = supervisor.employeeProfile?._id?.toString();
-      
+
       // Try to find warehouse by User._id first, then by EmployeeProfile._id
-      const warehouseInfo = warehouseMapByUserId[userId] || 
-        (employeeProfileId ? warehouseMapByEmployeeProfileId[employeeProfileId] : null);
+      const warehouseInfo =
+        warehouseMapByUserId[userId] ||
+        (employeeProfileId
+          ? warehouseMapByEmployeeProfileId[employeeProfileId]
+          : null);
 
       return {
         _id: supervisor._id,
@@ -215,7 +223,7 @@ const getAllStaff = async (req, res) => {
     // staff_ids in Warehouse could contain User._id or EmployeeProfile._id
     const warehouseMapByUserId = {};
     const warehouseMapByEmployeeProfileId = {};
-    
+
     allWarehouses.forEach((warehouse) => {
       if (warehouse.staff_ids && warehouse.staff_ids.length > 0) {
         const warehouseInfo = {
@@ -236,10 +244,13 @@ const getAllStaff = async (req, res) => {
     const staffWithDetails = allStaff.map((staff) => {
       const userId = staff._id.toString();
       const employeeProfileId = staff.employeeProfile?._id?.toString();
-      
+
       // Try to find warehouse by User._id first, then by EmployeeProfile._id
-      const warehouseInfo = warehouseMapByUserId[userId] || 
-        (employeeProfileId ? warehouseMapByEmployeeProfileId[employeeProfileId] : null);
+      const warehouseInfo =
+        warehouseMapByUserId[userId] ||
+        (employeeProfileId
+          ? warehouseMapByEmployeeProfileId[employeeProfileId]
+          : null);
 
       return {
         _id: staff._id,
@@ -420,6 +431,698 @@ const deleteWarehouse = (req, res) => {
   }
 };
 
+const warehouseInventory = async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      return res.status(401).json({ message: "User authentication required" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const userRole = user.role;
+
+    // Determine warehouse(s) based on role
+    if (userRole === "manager" || userRole === "supervisor") {
+      // For managers and supervisors, show only their assigned warehouse
+      const warehouseField =
+        userRole === "manager" ? "manager_id" : "supervisor_id";
+      const userWarehouse = await Warehouse.findOne({
+        [warehouseField]: userId,
+      });
+
+      if (!userWarehouse) {
+        return res.status(404).json({
+          message: `No warehouse assigned to this ${userRole}`,
+        });
+      }
+
+      const warehouseId = userWarehouse._id;
+
+      // Fetch warehouse details
+      const warehouse = await Warehouse.findById(warehouseId).select(
+        "name location"
+      );
+
+      const result = await TransactionHistory.aggregate([
+        {
+          $match: {
+            warehouse_id: new mongoose.Types.ObjectId(warehouseId),
+          },
+        },
+        { $unwind: "$grain" },
+
+        {
+          $group: {
+            _id: "$grain.category_id",
+
+            // ===== DEPOSIT =====
+            depositCompletedQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "deposit"] },
+                      { $eq: ["$transaction_status", "completed"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+            depositPendingQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "deposit"] },
+                      { $eq: ["$transaction_status", "pending"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+            depositRejectedQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "deposit"] },
+                      { $eq: ["$transaction_status", "rejected"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+            depositFailedQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "deposit"] },
+                      { $eq: ["$transaction_status", "failed"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+
+            // amount
+            depositCompletedAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "deposit"] },
+                      { $eq: ["$transaction_status", "completed"] },
+                    ],
+                  },
+                  "$total_amount",
+                  0,
+                ],
+              },
+            },
+            depositPendingAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "deposit"] },
+                      { $eq: ["$transaction_status", "pending"] },
+                    ],
+                  },
+                  "$total_amount",
+                  0,
+                ],
+              },
+            },
+            depositRejectedAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "deposit"] },
+                      { $eq: ["$transaction_status", "rejected"] },
+                    ],
+                  },
+                  "$total_amount",
+                  0,
+                ],
+              },
+            },
+            depositFailedAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "deposit"] },
+                      { $eq: ["$transaction_status", "failed"] },
+                    ],
+                  },
+                  "$total_amount",
+                  0,
+                ],
+              },
+            },
+
+            // ===== SELL =====
+            sellCompletedQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "sell"] },
+                      { $eq: ["$transaction_status", "completed"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+            sellPendingQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "sell"] },
+                      { $eq: ["$transaction_status", "pending"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+
+            sellCompletedAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "sell"] },
+                      { $eq: ["$transaction_status", "completed"] },
+                    ],
+                  },
+                  "$total_amount",
+                  0,
+                ],
+              },
+            },
+            sellPendingAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "sell"] },
+                      { $eq: ["$transaction_status", "pending"] },
+                    ],
+                  },
+                  "$total_amount",
+                  0,
+                ],
+              },
+            },
+
+            // ===== WITHDRAW =====
+            withdrawCompletedQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "withdraw"] },
+                      { $eq: ["$transaction_status", "completed"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+            withdrawPendingQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "withdraw"] },
+                      { $eq: ["$transaction_status", "pending"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+
+            // ===== LOAN =====
+            loanCompletedQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "loan"] },
+                      { $eq: ["$transaction_status", "completed"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+            loanPendingQty: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ["$transaction_type", "loan"] },
+                      { $eq: ["$transaction_status", "pending"] },
+                    ],
+                  },
+                  "$grain.quantity_quintal",
+                  0,
+                ],
+              },
+            },
+          },
+        },
+
+        {
+          $lookup: {
+            from: "graincategories",
+            localField: "_id",
+            foreignField: "_id",
+            as: "category",
+          },
+        },
+        { $unwind: "$category" },
+
+        {
+          $project: {
+            _id: 0,
+            category_id: "$category._id",
+            grain_type: "$category.grain_type",
+            quality: "$category.quality",
+
+            deposit: {
+              completed: {
+                qty: "$depositCompletedQty",
+                amount: "$depositCompletedAmount",
+              },
+              pending: {
+                qty: "$depositPendingQty",
+                amount: "$depositPendingAmount",
+              },
+              rejected: {
+                qty: "$depositRejectedQty",
+                amount: "$depositRejectedAmount",
+              },
+              failed: {
+                qty: "$depositFailedQty",
+                amount: "$depositFailedAmount",
+              },
+            },
+
+            sell: {
+              completed: {
+                qty: "$sellCompletedQty",
+                amount: "$sellCompletedAmount",
+              },
+              pending: { qty: "$sellPendingQty", amount: "$sellPendingAmount" },
+            },
+
+            withdraw: {
+              completed: "$withdrawCompletedQty",
+              pending: "$withdrawPendingQty",
+            },
+
+            loan: {
+              completed: "$loanCompletedQty",
+              pending: "$loanPendingQty",
+            },
+          },
+        },
+      ]);
+
+      return res.status(200).json({
+        warehouseId,
+        warehouseName: warehouse.name,
+        warehouseLocation: warehouse.location,
+        categories: result,
+      });
+    } else if (userRole === "admin") {
+      // For admin, show all warehouses inventory
+      const allWarehouses = await Warehouse.find().select(
+        "_id name location"
+      );
+
+      const inventoryPromises = allWarehouses.map(async (warehouse) => {
+        const result = await TransactionHistory.aggregate([
+          {
+            $match: {
+              warehouse_id: new mongoose.Types.ObjectId(warehouse._id),
+            },
+          },
+          { $unwind: "$grain" },
+
+          {
+            $group: {
+              _id: "$grain.category_id",
+
+              // ===== DEPOSIT =====
+              depositCompletedQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "deposit"] },
+                        { $eq: ["$transaction_status", "completed"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+              depositPendingQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "deposit"] },
+                        { $eq: ["$transaction_status", "pending"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+              depositRejectedQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "deposit"] },
+                        { $eq: ["$transaction_status", "rejected"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+              depositFailedQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "deposit"] },
+                        { $eq: ["$transaction_status", "failed"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+
+              // amount
+              depositCompletedAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "deposit"] },
+                        { $eq: ["$transaction_status", "completed"] },
+                      ],
+                    },
+                    "$total_amount",
+                    0,
+                  ],
+                },
+              },
+              depositPendingAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "deposit"] },
+                        { $eq: ["$transaction_status", "pending"] },
+                      ],
+                    },
+                    "$total_amount",
+                    0,
+                  ],
+                },
+              },
+              depositRejectedAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "deposit"] },
+                        { $eq: ["$transaction_status", "rejected"] },
+                      ],
+                    },
+                    "$total_amount",
+                    0,
+                  ],
+                },
+              },
+              depositFailedAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "deposit"] },
+                        { $eq: ["$transaction_status", "failed"] },
+                      ],
+                    },
+                    "$total_amount",
+                    0,
+                  ],
+                },
+              },
+
+              // ===== SELL =====
+              sellCompletedQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "sell"] },
+                        { $eq: ["$transaction_status", "completed"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+              sellPendingQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "sell"] },
+                        { $eq: ["$transaction_status", "pending"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+
+              sellCompletedAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "sell"] },
+                        { $eq: ["$transaction_status", "completed"] },
+                      ],
+                    },
+                    "$total_amount",
+                    0,
+                  ],
+                },
+              },
+              sellPendingAmount: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "sell"] },
+                        { $eq: ["$transaction_status", "pending"] },
+                      ],
+                    },
+                    "$total_amount",
+                    0,
+                  ],
+                },
+              },
+
+              // ===== WITHDRAW =====
+              withdrawCompletedQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "withdraw"] },
+                        { $eq: ["$transaction_status", "completed"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+              withdrawPendingQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "withdraw"] },
+                        { $eq: ["$transaction_status", "pending"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+
+              // ===== LOAN =====
+              loanCompletedQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "loan"] },
+                        { $eq: ["$transaction_status", "completed"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+              loanPendingQty: {
+                $sum: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $eq: ["$transaction_type", "loan"] },
+                        { $eq: ["$transaction_status", "pending"] },
+                      ],
+                    },
+                    "$grain.quantity_quintal",
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+
+          {
+            $lookup: {
+              from: "graincategories",
+              localField: "_id",
+              foreignField: "_id",
+              as: "category",
+            },
+          },
+          { $unwind: "$category" },
+
+          {
+            $project: {
+              _id: 0,
+              category_id: "$category._id",
+              grain_type: "$category.grain_type",
+              quality: "$category.quality",
+
+              deposit: {
+                completed: {
+                  qty: "$depositCompletedQty",
+                  amount: "$depositCompletedAmount",
+                },
+                pending: {
+                  qty: "$depositPendingQty",
+                  amount: "$depositPendingAmount",
+                },
+                rejected: {
+                  qty: "$depositRejectedQty",
+                  amount: "$depositRejectedAmount",
+                },
+                failed: {
+                  qty: "$depositFailedQty",
+                  amount: "$depositFailedAmount",
+                },
+              },
+
+              sell: {
+                completed: {
+                  qty: "$sellCompletedQty",
+                  amount: "$sellCompletedAmount",
+                },
+                pending: {
+                  qty: "$sellPendingQty",
+                  amount: "$sellPendingAmount",
+                },
+              },
+
+              withdraw: {
+                completed: "$withdrawCompletedQty",
+                pending: "$withdrawPendingQty",
+              },
+
+              loan: {
+                completed: "$loanCompletedQty",
+                pending: "$loanPendingQty",
+              },
+            },
+          },
+        ]);
+
+        return {
+          warehouseId: warehouse._id,
+          warehouseName: warehouse.name,
+          warehouseLocation: warehouse.location,
+          categories: result,
+        };
+      });
+
+      const allInventories = await Promise.all(inventoryPromises);
+
+      return res.status(200).json({
+        success: true,
+        count: allInventories.length,
+        warehouses: allInventories,
+      });
+    } else {
+      return res.status(403).json({
+        message:
+          "Access denied. Only supervisor, manager, or admin can access warehouse inventory",
+      });
+    }
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 export {
   createWarehouse,
   getAllManager,
@@ -429,4 +1132,5 @@ export {
   getWarehouseById,
   updateWarehouse,
   deleteWarehouse,
+  warehouseInventory,
 };

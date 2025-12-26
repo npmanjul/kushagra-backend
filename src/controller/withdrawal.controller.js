@@ -26,6 +26,7 @@ const createWithdrawalRequest = async (req, res) => {
       reason,
       notes,
       moisture_content,
+      WarehouseId,
     } = req.body;
 
     if (!["admin", "manager", "supervisor"].includes(user_role)) {
@@ -45,6 +46,10 @@ const createWithdrawalRequest = async (req, res) => {
 
     if (!grain_id || !quantity || !price || !total_value) {
       return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    if (!WarehouseId) {
+      return res.status(400).json({ message: "WarehouseId is required" });
     }
 
     const numericQuantity = Number(quantity);
@@ -105,7 +110,9 @@ const createWithdrawalRequest = async (req, res) => {
     categoryEntry.pending_quantity =
       Number(categoryEntry.pending_quantity) || 0;
 
-    if (numericQuantity > categoryEntry.total_quantity) {
+    const availableQuantity = categoryEntry.total_quantity - categoryEntry.pending_quantity;
+
+    if (numericQuantity > availableQuantity) {
       return res.status(400).json({
         message:
           "Requested withdrawal quantity exceeds available (non-pending) quantity",
@@ -162,6 +169,7 @@ const createWithdrawalRequest = async (req, res) => {
     await TransactionHistory.create({
       transaction_type: "withdraw",
       user_id: targetFarmerId,
+      warehouse_id: WarehouseId,
       grain: [
         {
           category_id: grain_id,
@@ -184,20 +192,30 @@ const createWithdrawalRequest = async (req, res) => {
 
     // 4) Update bucket quantities depending on role
     if (user_role === "admin") {
-      // admin: apply immediately -> subtract from total_quantity
+      // admin: apply immediately -> subtract from total_quantity directly
       categoryEntry.total_quantity =
         categoryEntry.total_quantity - numericQuantity;
       // ensure not negative (extra guard)
       if (categoryEntry.total_quantity < 0) {
-        // rollback: delete created records? For simplicity return error
         return res
           .status(500)
           .json({ message: "Quantity adjustment would make total negative" });
       }
     } else {
-      // manager / supervisor : add to pending_quantity
+      // manager / supervisor: subtract from total_quantity AND add to pending_quantity
+      // This ensures the quantity is removed from user's available inventory
+      // and tracked as pending withdrawal
+      categoryEntry.total_quantity =
+        categoryEntry.total_quantity - numericQuantity;
       categoryEntry.pending_quantity =
         categoryEntry.pending_quantity + numericQuantity;
+      
+      // ensure not negative (extra guard)
+      if (categoryEntry.total_quantity < 0) {
+        return res
+          .status(500)
+          .json({ message: "Quantity adjustment would make total negative" });
+      }
     }
 
     // console.log("After - ",categoryEntry.pending_quantity)
