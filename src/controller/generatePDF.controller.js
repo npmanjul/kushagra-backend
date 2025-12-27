@@ -1,13 +1,18 @@
-import { employeeProfileTemplate, transactionInvoiceTemplate, transactionReportTemplate } from "../utils/PDFTemplates.js";
-import chromium from "@sparticuz/chromium";
-import puppeteerCore from "puppeteer-core";
+import html_to_pdf from "html-pdf-node";
+import {
+  employeeProfileTemplate,
+  transactionInvoiceTemplate,
+  transactionReportTemplate,
+} from "../utils/PDFTemplates.js";
+
 
 const generatePDF = async (req, res) => {
   try {
     const data = req.body;
     const service = req.params.service;
+
     let templateHTML;
-    
+
     if (service === "transactions") {
       templateHTML = transactionReportTemplate(JSON.parse(data.data));
     } else if (service === "profile") {
@@ -15,47 +20,29 @@ const generatePDF = async (req, res) => {
     } else if (service === "usertransaction") {
       templateHTML = transactionInvoiceTemplate(JSON.parse(data.data));
     }
-    
-    console.log("Launching browser...");
-    
-    // For Vercel, always use @sparticuz/chromium
-    const browser = await puppeteerCore.launch({
-      args: [
-        ...chromium.args,
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--single-process"
-      ],
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
-    });
-    
-    const page = await browser.newPage();
-    await page.setContent(templateHTML, {
-      waitUntil: "networkidle0",
-    });
-    
-    const pdfBuffer = await page.pdf({
+    const file = { content: templateHTML };
+
+    const pdfBuffer = await html_to_pdf.generatePdf(file, {
       format: "A4",
       printBackground: true,
+      margin: {
+        top: "20mm",
+        bottom: "20mm",
+        left: "10mm",
+        right: "10mm",
+      },
     });
-    
-    await browser.close();
-    
+
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename=invoice.pdf`);
-    return res.send(pdfBuffer);
-    
+    res.setHeader("Content-Disposition", "attachment; filename=invoice.pdf");
+
+
+    res.send(pdfBuffer);
   } catch (error) {
     console.error("Error generating PDF:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error while generating PDF",
-      error: error.message,
-      stack: error.stack
     });
   }
 };

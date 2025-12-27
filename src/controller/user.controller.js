@@ -1072,64 +1072,11 @@ const getAllFarmers = async (req, res) => {
         .json({ message: "Only admin, manager, supervisor can access farmers" });
     }
 
-    let farmerUserIds = [];
-
-    if (user_role === "admin") {
-      // Admin can see all farmers
-      const allFarmers = await User.find({ role: "farmer" })
-        .select("_id")
-        .lean();
-      farmerUserIds = allFarmers.map((f) => f._id);
-    } else {
-      // Manager or Supervisor - get only farmers from their warehouses
-      
-      // 1. Get the employee profile for this user
-      const employeeProfile = await EmployeeProfiles.findOne({ user: userId }).lean();
-      if (!employeeProfile) {
-        return res.status(404).json({ message: "Employee profile not found" });
-      }
-
-      // 2. Find warehouses where this employee is manager or supervisor
-      const warehouseQuery =
-        user_role === "manager"
-          ? { manager_id: employeeProfile._id }
-          : { supervisor_id: employeeProfile._id };
-
-      const warehouses = await Warehouses.find(warehouseQuery)
-        .select("_id")
-        .lean();
-
-      if (!warehouses.length) {
-        return res.status(200).json({
-          success: true,
-          message: "No warehouses assigned to you",
-          farmers: [],
-          pagination: {
-            currentPage: page,
-            totalPages: 0,
-            totalCount: 0,
-            limit,
-            hasNextPage: false,
-            hasPrevPage: false,
-          },
-        });
-      }
-
-      const warehouseIds = warehouses.map((w) => w._id);
-
-      // 3. Find all transactions from these warehouses to get farmer user IDs
-      const transactions = await TransactionHistory.find({
-        warehouse_id: { $in: warehouseIds },
-      })
-        .select("user_id")
-        .lean();
-
-      // Get unique farmer user IDs (keep as ObjectIds for proper MongoDB queries)
-      const uniqueFarmerIds = [
-        ...new Map(transactions.map((t) => [t.user_id.toString(), t.user_id])).values(),
-      ];
-      farmerUserIds = uniqueFarmerIds;
-    }
+    // Admin, Manager, and Supervisor can all see all farmers
+    const allFarmers = await User.find({ role: "farmer" })
+      .select("_id")
+      .lean();
+    const farmerUserIds = allFarmers.map((f) => f._id);
 
     const totalCount = farmerUserIds.length;
 
