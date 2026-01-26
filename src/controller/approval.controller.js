@@ -4,7 +4,6 @@ import User from "../model/Users.model.js";
 import StorageBucket from "../model/StorageBucket.model.js";
 import TransactionModel from "../model/Transaction.model.js";
 
-
 const get_deposite_approvals = async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -366,13 +365,8 @@ const get_deposite_approvals = async (req, res) => {
       { $sort: { transaction_date: -1 } }, // optional sort
       {
         $facet: {
-          data: [
-            { $skip: skip },
-            { $limit: limitNum },
-          ],
-          totalCount: [
-            { $count: "count" },
-          ],
+          data: [{ $skip: skip }, { $limit: limitNum }],
+          totalCount: [{ $count: "count" }],
         },
       },
     ];
@@ -409,8 +403,7 @@ const get_deposite_approvals = async (req, res) => {
 
     const facet = paginatedResult[0] || { data: [], totalCount: [] };
     const transactions = facet.data || [];
-    const totalItems =
-      (facet.totalCount[0] && facet.totalCount[0].count) || 0;
+    const totalItems = (facet.totalCount[0] && facet.totalCount[0].count) || 0;
 
     // Build counts + total values
     let allCount = 0;
@@ -527,7 +520,9 @@ const action_deposite_approvals = async (req, res) => {
       const bucketOwnerId = transaction.user_id;
 
       if (!bucketOwnerId) {
-        console.warn("No user_id on transaction, skipping StorageBucket update");
+        console.warn(
+          "No user_id on transaction, skipping StorageBucket update"
+        );
         return;
       }
 
@@ -619,7 +614,9 @@ const action_deposite_approvals = async (req, res) => {
       const bucketOwnerId = transaction.user_id;
 
       if (!bucketOwnerId) {
-        console.warn("No user_id on transaction, skipping StorageBucket update");
+        console.warn(
+          "No user_id on transaction, skipping StorageBucket update"
+        );
         return;
       }
 
@@ -661,7 +658,7 @@ const action_deposite_approvals = async (req, res) => {
         } else {
           // Category exists, add to total
           const cat = bucket.categories[idx];
-          
+
           cat.warehouse_storage.push({
             transaction_id: transaction._id,
             created_at: new Date(),
@@ -851,8 +848,8 @@ const action_deposite_approvals = async (req, res) => {
         await transaction.save();
 
         // ✅ Check if Manager OR Supervisor already approved
-        const hasLowerApproval = 
-          approval.supervisor_approval?.status || 
+        const hasLowerApproval =
+          approval.supervisor_approval?.status ||
           approval.manager_approval?.status;
 
         if (hasLowerApproval) {
@@ -879,8 +876,8 @@ const action_deposite_approvals = async (req, res) => {
 
         // ✅ Remove from pending_quantity if supervisor OR manager had approved
         // (Either supervisor or manager would have added to pending_quantity on their approval)
-        const hasLowerApproval = 
-          approval.supervisor_approval?.status || 
+        const hasLowerApproval =
+          approval.supervisor_approval?.status ||
           approval.manager_approval?.status;
 
         if (hasLowerApproval) {
@@ -1078,7 +1075,20 @@ const get_withdraw_approvals = async (req, res) => {
           admin_user: { $arrayElemAt: ["$admin_user", 0] },
         },
       },
-
+      {
+        $lookup: {
+          from: "warehouses",
+          localField: "warehouse_id",
+          foreignField: "_id",
+          as: "warehouse",
+        },
+      },
+      {
+        $unwind: {
+          path: "$warehouse",
+          preserveNullAndEmptyArrays: true, // safety
+        },
+      },
       // grain: qty/price/moisture + category{grain_type,quality}
       {
         $addFields: {
@@ -1176,7 +1186,6 @@ const get_withdraw_approvals = async (req, res) => {
       {
         $unset: [
           "user_id",
-          "warehouse_id",         // we’re not using warehouse here
           "approval_status",
           "grain.category_id",
           "grain_categories",
@@ -1216,6 +1225,14 @@ const get_withdraw_approvals = async (req, res) => {
             admin_approval: "$approval.admin_approval",
             manager_approval: "$approval.manager_approval",
             supervisor_approval: "$approval.supervisor_approval",
+          },
+          warehouse: {
+            _id: "$warehouse._id",
+            name: "$warehouse.name",
+            location: "$warehouse.location",
+            capacity_quintal: "$warehouse.capacity_quintal",
+            manager_id: "$warehouse.manager_id",
+            supervisor_id: "$warehouse.supervisor_id",
           },
         },
       },
@@ -1267,8 +1284,7 @@ const get_withdraw_approvals = async (req, res) => {
 
     const facet = paginatedResult[0] || { data: [], totalCount: [] };
     const transactions = facet.data || [];
-    const totalItems =
-      (facet.totalCount[0] && facet.totalCount[0].count) || 0;
+    const totalItems = (facet.totalCount[0] && facet.totalCount[0].count) || 0;
 
     // Build counts + total values
     let allCount = 0;
@@ -1389,7 +1405,7 @@ const action_withdraw_approvals = async (req, res) => {
 
       for (const g of transaction.grain) {
         const cat = bucket.categories.find(
-          c => c.category_id.toString() === g.category_id.toString()
+          (c) => c.category_id.toString() === g.category_id.toString()
         );
         if (!cat) continue;
 
@@ -1420,7 +1436,7 @@ const action_withdraw_approvals = async (req, res) => {
 
       for (const g of transaction.grain) {
         const cat = bucket.categories.find(
-          c => c.category_id.toString() === g.category_id.toString()
+          (c) => c.category_id.toString() === g.category_id.toString()
         );
         if (!cat) continue;
 
@@ -1447,7 +1463,7 @@ const action_withdraw_approvals = async (req, res) => {
 
       for (const g of transaction.grain) {
         const cat = bucket.categories.find(
-          c => c.category_id.toString() === g.category_id.toString()
+          (c) => c.category_id.toString() === g.category_id.toString()
         );
         if (!cat) continue;
 
@@ -1742,6 +1758,20 @@ const get_sell_approvals = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "warehouses",
+          localField: "warehouse_id",
+          foreignField: "_id",
+          as: "warehouse",
+        },
+      },
+      {
+        $unwind: {
+          path: "$warehouse",
+          preserveNullAndEmptyArrays: true, // safety
+        },
+      },
+      {
         $addFields: {
           supervisor_user: { $arrayElemAt: ["$supervisor_user", 0] },
           manager_user: { $arrayElemAt: ["$manager_user", 0] },
@@ -1846,7 +1876,6 @@ const get_sell_approvals = async (req, res) => {
       {
         $unset: [
           "user_id",
-          "warehouse_id",
           "approval_status",
           "grain.category_id",
           "grain_categories",
@@ -1886,6 +1915,14 @@ const get_sell_approvals = async (req, res) => {
             admin_approval: "$approval.admin_approval",
             manager_approval: "$approval.manager_approval",
             supervisor_approval: "$approval.supervisor_approval",
+          },
+          warehouse: {
+            _id: "$warehouse._id",
+            name: "$warehouse.name",
+            location: "$warehouse.location",
+            capacity_quintal: "$warehouse.capacity_quintal",
+            manager_id: "$warehouse.manager_id",
+            supervisor_id: "$warehouse.supervisor_id",
           },
         },
       },
@@ -1936,8 +1973,7 @@ const get_sell_approvals = async (req, res) => {
 
     const facet = paginatedResult[0] || { data: [], totalCount: [] };
     const transactions = facet.data || [];
-    const totalItems =
-      (facet.totalCount[0] && facet.totalCount[0].count) || 0;
+    const totalItems = (facet.totalCount[0] && facet.totalCount[0].count) || 0;
 
     // Build counts + total values
     let allCount = 0;
@@ -2029,7 +2065,9 @@ const action_sell_approvals = async (req, res) => {
     }
 
     if (transaction.transaction_type !== "sell") {
-      return res.status(400).json({ message: "Only sell transactions allowed" });
+      return res
+        .status(400)
+        .json({ message: "Only sell transactions allowed" });
     }
 
     if (["completed", "rejected"].includes(transaction.transaction_status)) {
@@ -2058,7 +2096,7 @@ const action_sell_approvals = async (req, res) => {
 
       for (const g of transaction.grain) {
         const cat = bucket.categories.find(
-          c => c.category_id.toString() === g.category_id.toString()
+          (c) => c.category_id.toString() === g.category_id.toString()
         );
         if (!cat) continue;
 
@@ -2089,7 +2127,7 @@ const action_sell_approvals = async (req, res) => {
 
       for (const g of transaction.grain) {
         const cat = bucket.categories.find(
-          c => c.category_id.toString() === g.category_id.toString()
+          (c) => c.category_id.toString() === g.category_id.toString()
         );
         if (!cat) continue;
 
@@ -2116,7 +2154,7 @@ const action_sell_approvals = async (req, res) => {
 
       for (const g of transaction.grain) {
         const cat = bucket.categories.find(
-          c => c.category_id.toString() === g.category_id.toString()
+          (c) => c.category_id.toString() === g.category_id.toString()
         );
         if (!cat) continue;
 
@@ -2606,8 +2644,7 @@ const get_loan_approvals = async (req, res) => {
 
     const facet = paginatedResult[0] || { data: [], totalCount: [] };
     const transactions = facet.data || [];
-    const totalItems =
-      (facet.totalCount[0] && facet.totalCount[0].count) || 0;
+    const totalItems = (facet.totalCount[0] && facet.totalCount[0].count) || 0;
 
     // Build counts + total values
     let allCount = 0;
@@ -2699,7 +2736,9 @@ const action_loan_approvals = async (req, res) => {
     }
 
     if (transaction.transaction_type !== "loan") {
-      return res.status(400).json({ message: "Only loan transactions allowed" });
+      return res
+        .status(400)
+        .json({ message: "Only loan transactions allowed" });
     }
 
     if (["completed", "rejected"].includes(transaction.transaction_status)) {
@@ -2728,7 +2767,7 @@ const action_loan_approvals = async (req, res) => {
 
       for (const g of transaction.grain) {
         const cat = bucket.categories.find(
-          c => c.category_id.toString() === g.category_id.toString()
+          (c) => c.category_id.toString() === g.category_id.toString()
         );
         if (!cat) continue;
 
@@ -2759,7 +2798,7 @@ const action_loan_approvals = async (req, res) => {
 
       for (const g of transaction.grain) {
         const cat = bucket.categories.find(
-          c => c.category_id.toString() === g.category_id.toString()
+          (c) => c.category_id.toString() === g.category_id.toString()
         );
         if (!cat) continue;
 
@@ -2786,7 +2825,7 @@ const action_loan_approvals = async (req, res) => {
 
       for (const g of transaction.grain) {
         const cat = bucket.categories.find(
-          c => c.category_id.toString() === g.category_id.toString()
+          (c) => c.category_id.toString() === g.category_id.toString()
         );
         if (!cat) continue;
 

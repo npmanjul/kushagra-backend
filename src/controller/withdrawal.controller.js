@@ -107,8 +107,8 @@ const createWithdrawalRequest = async (req, res) => {
 
     // ensure numeric fields exist on category entry
     categoryEntry.total_quantity = Number(categoryEntry.total_quantity) || 0;
-    categoryEntry.pending_quantity =
-      Number(categoryEntry.pending_quantity) || 0;
+    categoryEntry.pending_quantity = Number(categoryEntry.pending_quantity) || 0;
+    categoryEntry.hold_quantity = Number(categoryEntry.hold_quantity) || 0;
 
     const availableQuantity = categoryEntry.total_quantity - categoryEntry.pending_quantity;
 
@@ -202,13 +202,13 @@ const createWithdrawalRequest = async (req, res) => {
           .json({ message: "Quantity adjustment would make total negative" });
       }
     } else {
-      // manager / supervisor: subtract from total_quantity AND add to pending_quantity
+      // manager / supervisor: subtract from total_quantity AND add to hold_quantity
       // This ensures the quantity is removed from user's available inventory
-      // and tracked as pending withdrawal
+      // and tracked as held withdrawal
       categoryEntry.total_quantity =
         categoryEntry.total_quantity - numericQuantity;
-      categoryEntry.pending_quantity =
-        categoryEntry.pending_quantity + numericQuantity;
+      categoryEntry.hold_quantity =
+        categoryEntry.hold_quantity + numericQuantity;
       
       // ensure not negative (extra guard)
       if (categoryEntry.total_quantity < 0) {

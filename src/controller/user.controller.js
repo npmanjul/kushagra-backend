@@ -68,6 +68,18 @@ const dashboardAnalytics = async (req, res) => {
     const totalGrain = [];
     let userAccountBalance = 0;
 
+    // Create a category map from bucket for quantity stages
+    const bucketCategoryMap = {};
+    for (const bucket of userGrains) {
+      for (const cat of bucket.categories) {
+        bucketCategoryMap[cat.category_id.toString()] = {
+          total_quantity: cat.total_quantity || 0,
+          pending_quantity: cat.pending_quantity || 0,
+          hold_quantity: cat.hold_quantity || 0,
+        };
+      }
+    }
+
     for (const cat of categoriesDetails) {
       const catId = cat._id.toString();
       const grainType = cat.grain_type;
@@ -79,11 +91,20 @@ const dashboardAnalytics = async (req, res) => {
       else if (quality === "B") todayPricePerQtl = todayPrices.avg || 0;
       else if (quality === "C") todayPricePerQtl = todayPrices.min || 0;
 
-      let totalQuantity = 0;
-      let totalValue = 0;
+      // Get quantities from bucket
+      const bucketData = bucketCategoryMap[catId] || {
+        total_quantity: 0,
+        pending_quantity: 0,
+        hold_quantity: 0,
+      };
+
+      const totalQuantity = bucketData.total_quantity;
+      const pendingQuantity = bucketData.pending_quantity;
+      const holdQuantity = bucketData.hold_quantity;
+
       let totalProfit = 0;
 
-      // ✅ Iterate through transactions and their grain array
+      // ✅ Iterate through transactions and their grain array for profit calculation
       for (const tx of transactions) {
         const grainItem = tx.grain.find(
           (g) => g.category_id.toString() === catId
@@ -103,13 +124,7 @@ const dashboardAnalytics = async (req, res) => {
         else if (tx.transaction_type === "credit")
           userAccountBalance -= quantity * todayPricePerQtl;
 
-        // 🏷️ Stock adjustments
-        if (tx.transaction_type === "deposit") totalQuantity += quantity;
-        else if (tx.transaction_type === "sell") totalQuantity -= quantity;
-        else if (tx.transaction_type === "credit") totalQuantity -= quantity;
-
-        totalValue += quantity * todayPricePerQtl;
-        totalProfit += profitPerQtl;
+        totalProfit += profitPerQtl * quantity;
       }
 
       const avgProfit = totalQuantity > 0 ? totalProfit / totalQuantity : 0;
@@ -119,20 +134,44 @@ const dashboardAnalytics = async (req, res) => {
         grain_type: grainType,
         quality,
         total_quantity: totalQuantity,
+        pending_quantity: pendingQuantity,
+        hold_quantity: holdQuantity,
         today_price_per_quintal: todayPricePerQtl,
-        total_value: totalValue,
+        total_value: totalQuantity * todayPricePerQtl,
+        pending_value: pendingQuantity * todayPricePerQtl,
+        hold_value: holdQuantity * todayPricePerQtl,
         avgProfitPerQtl: avgProfit,
       });
     }
 
-    // ✅ Aggregates
+    // ✅ Aggregates for all stages
     const totalGrainQuantity = totalGrain.reduce(
       (sum, g) => sum + (g.total_quantity || 0),
       0
     );
 
+    const totalPendingQuantity = totalGrain.reduce(
+      (sum, g) => sum + (g.pending_quantity || 0),
+      0
+    );
+
+    const totalHoldQuantity = totalGrain.reduce(
+      (sum, g) => sum + (g.hold_quantity || 0),
+      0
+    );
+
     const totalCost = totalGrain.reduce(
       (sum, g) => sum + (g.total_value || 0),
+      0
+    );
+
+    const totalPendingValue = totalGrain.reduce(
+      (sum, g) => sum + (g.pending_value || 0),
+      0
+    );
+
+    const totalHoldValue = totalGrain.reduce(
+      (sum, g) => sum + (g.hold_value || 0),
       0
     );
 
@@ -147,7 +186,11 @@ const dashboardAnalytics = async (req, res) => {
     return res.status(200).json({
       message: "Dashboard analytics fetched successfully",
       totalGrainQuantity,
+      totalPendingQuantity,
+      totalHoldQuantity,
       totalCost,
+      totalPendingValue,
+      totalHoldValue,
       availableCredit,
       avgProfit,
       userAccountBalance,
@@ -358,7 +401,7 @@ const categoryTransactionDetails = async (req, res) => {
         (g) => g.category_id._id.toString() === category_id
       );
 
-      const { quantity_quintal, price_per_quintal } = grainItem || {};
+      const { quantity_quintal, price_per_quintal, moisture_content } = grainItem || {};
       const quantity = quantity_quintal || 0;
       const depositPrice = price_per_quintal || 0;
       const profitPerQtl = todayPricePerQtl - depositPrice;
@@ -372,6 +415,10 @@ const categoryTransactionDetails = async (req, res) => {
         transaction_id: tx._id,
         transaction_type: tx.transaction_type,
         transaction_date: tx.transaction_date,
+        transaction_status: tx.transaction_status,
+        total_amount: tx.total_amount,
+        remarks: tx.remarks,
+        month: tx.month || null,
         symbol:
           tx.transaction_type === "deposit" || tx.transaction_type === "credit"
             ? "+"
@@ -404,8 +451,21 @@ const categoryTransactionDetails = async (req, res) => {
           unit: grainItem?.category_id?.unit,
           quantity_quintal: quantity,
           price_per_quintal: depositPrice,
+          moisture_content: moisture_content || null,
           total_amount: quantity * depositPrice,
         },
+
+        // All grains in transaction (for multi-grain transactions)
+        all_grains: tx.grain.map(g => ({
+          category_id: g.category_id?._id,
+          grain_type: g.category_id?.grain_type,
+          quality: g.category_id?.quality,
+          unit: g.category_id?.unit,
+          quantity_quintal: g.quantity_quintal,
+          price_per_quintal: g.price_per_quintal,
+          moisture_content: g.moisture_content,
+          total_amount: g.quantity_quintal * g.price_per_quintal,
+        })),
 
         // Price analysis
         price_analysis: {
@@ -416,21 +476,35 @@ const categoryTransactionDetails = async (req, res) => {
           total_current_value: quantity * todayPricePerQtl,
         },
 
-        // Approval status
+        // Approval status with complete details
         approval_status: tx.approval_status
           ? {
               _id: tx.approval_status._id,
-              manager_approval: tx.approval_status.manager_approval,
-              supervisor_approval: tx.approval_status.supervisor_approval,
-              admin_approval: tx.approval_status.admin_approval,
+              manager_approval: {
+                user_id: tx.approval_status.manager_approval?.user_id?._id,
+                user_name: tx.approval_status.manager_approval?.user_id?.name,
+                user_role: tx.approval_status.manager_approval?.user_id?.role,
+                status: tx.approval_status.manager_approval?.status,
+                date: tx.approval_status.manager_approval?.date,
+              },
+              supervisor_approval: {
+                user_id: tx.approval_status.supervisor_approval?.user_id?._id,
+                user_name: tx.approval_status.supervisor_approval?.user_id?.name,
+                user_role: tx.approval_status.supervisor_approval?.user_id?.role,
+                status: tx.approval_status.supervisor_approval?.status,
+                date: tx.approval_status.supervisor_approval?.date,
+              },
+              admin_approval: {
+                user_id: tx.approval_status.admin_approval?.user_id?._id,
+                user_name: tx.approval_status.admin_approval?.user_id?.name,
+                user_role: tx.approval_status.admin_approval?.user_id?.role,
+                status: tx.approval_status.admin_approval?.status,
+                date: tx.approval_status.admin_approval?.date,
+              },
             }
           : null,
 
-        // Additional transaction details
-        notes: tx.notes,
-        status: tx.status,
-        payment_method: tx.payment_method,
-        receipt_url: tx.receipt_url,
+        // Timestamps
         created_at: tx.createdAt,
         updated_at: tx.updatedAt,
       };
@@ -1072,8 +1146,14 @@ const getAllFarmers = async (req, res) => {
         .json({ message: "Only admin, manager, supervisor can access farmers" });
     }
 
-    // Admin, Manager, and Supervisor can all see all farmers
-    const allFarmers = await User.find({ role: "farmer" })
+    // Build query based on role
+    // Admin can see all farmers, Manager and Supervisor can only see approved farmers
+    const farmerQuery = { role: "farmer" };
+    if (user_role === "manager" || user_role === "supervisor") {
+      farmerQuery["farmerVerification.overallStatus"] = "approved";
+    }
+
+    const allFarmers = await User.find(farmerQuery)
       .select("_id")
       .lean();
     const farmerUserIds = allFarmers.map((f) => f._id);
