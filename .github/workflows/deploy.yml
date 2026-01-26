@@ -1,4 +1,4 @@
-name: Deploy Backend
+name: Backend Deploy
 
 on:
   push:
@@ -7,17 +7,18 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Deploy Backend
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          key: ${{ secrets.EC2_KEY }}
           script: |
-            cd ~/kushagarFPO/kushagra-backend
+            cd /var/www/backend
             git pull origin main
-            cd ~/kushagarFPO
-            docker compose up --build -d backend
+            npm install
+            pm2 restart backend
