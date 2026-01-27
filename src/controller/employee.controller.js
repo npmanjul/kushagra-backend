@@ -3,11 +3,6 @@ import User from "../model/Users.model.js";
 import Warehouse from "../model/Warehouses.model.js";
 import { encryptPassword } from "../utils/bcrypt.js";
 import { generateEmployeeId } from "../utils/miscellaneous.js";
-import {
-  uploadOnCloudinary,
-  deleteFromCloudinary,
-  extractPublicId,
-} from "../utils/cloudinary.js";
 
 /* ------------ Step 1: Account Setup ------------ */
 const employee_onboarding_step_1 = async (req, res) => {
@@ -110,7 +105,7 @@ const employee_onboarding_step_2 = async (req, res) => {
         .json({ message: "Only admin can perform this operation" });
     }
 
-    const { id, maritalStatus, nationality, bloodGroup } = req.body;
+    const { id, employeeImage, maritalStatus, nationality, bloodGroup } = req.body;
 
     if (!id) {
       return res.status(400).json({ message: "Employee id is required" });
@@ -121,60 +116,22 @@ const employee_onboarding_step_2 = async (req, res) => {
       return res.status(404).json({ message: "Employee profile not found" });
     }
 
-    // Use employee name for default avatar (fallback if name not present)
-    const avatarName =
-      employeeProfile.fullName ||
-      `${employeeProfile.firstName || ""} ${
-        employeeProfile.lastName || ""
-      }`.trim() ||
-      "Employee";
+    // Get employee name for default avatar (fallback if name not present)
+    const employeeUser = await User.findById(employeeProfile.user);
+    const avatarName = employeeUser?.name || "Employee";
 
     const defaultImageUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(
       avatarName
     )}&background=random&size=256`;
 
-    const uploadedFile =
-      req.file ||
-      (req.files?.employeeImage && req.files.employeeImage[0]) ||
-      null;
-
-    let employeeImageUrl = employeeProfile.employeeImage || defaultImageUrl;
-
-    if (uploadedFile) {
-      try {
-        const uploadResult = await uploadOnCloudinary(uploadedFile.path);
-
-        if (uploadResult?.secure_url) {
-          const newUrl = uploadResult.secure_url;
-
-          if (
-            employeeProfile.employeeImage &&
-            employeeProfile.employeeImage.includes("res.cloudinary.com")
-          ) {
-            const publicId = extractPublicId(employeeProfile.employeeImage);
-            if (publicId) {
-              try {
-                await deleteFromCloudinary(publicId);
-              } catch (err) {
-                console.warn("Failed to delete old image:", err.message);
-              }
-            }
-          }
-
-          employeeImageUrl = newUrl;
-        } else {
-          console.warn("Cloudinary upload failed: no secure_url in response");
-        }
-      } catch (err) {
-        console.error("Error uploading image to Cloudinary:", err);
-      }
-    }
+    // Use the S3 public URL from the request body, or fallback to existing image or default
+    let employeeImageUrl = employeeImage || employeeProfile.employeeImage || defaultImageUrl;
 
     // ----- Update Employee Profile -----
     await Employee.findByIdAndUpdate(
       employeeProfile._id,
       {
-        employeeImage: employeeImageUrl || defaultImageUrl,
+        employeeImage: employeeImageUrl,
         maritalStatus,
         nationality,
         bloodGroup,
@@ -199,6 +156,7 @@ const employee_onboarding_step_2 = async (req, res) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 /* ------------ Step 3: Address Info ------------ */
 const employee_onboarding_step_3 = async (req, res) => {
@@ -835,12 +793,12 @@ const getManagerDetails = async (req, res) => {
       is_engaged: !!warehouse,
       warehouse: warehouse
         ? {
-            _id: warehouse._id,
-            name: warehouse.name,
-            location: warehouse.location,
-            capacity_quintal: warehouse.capacity_quintal,
-            created_at: warehouse.created_at,
-          }
+          _id: warehouse._id,
+          name: warehouse.name,
+          location: warehouse.location,
+          capacity_quintal: warehouse.capacity_quintal,
+          created_at: warehouse.created_at,
+        }
         : null,
 
       // Timestamps
@@ -984,6 +942,9 @@ const updateManagerDetails = async (req, res) => {
       emergencyContacts,
       hrNotes,
       backgroundCheckStatus,
+
+      // S3 Image URL (uploaded from frontend)
+      employeeImage,
     } = req.body;
 
     // Build User update object (only changed fields)
@@ -1082,36 +1043,9 @@ const updateManagerDetails = async (req, res) => {
       });
     }
 
-    // Handle image upload if provided
-    const uploadedFile =
-      req.file ||
-      (req.files?.employeeImage && req.files.employeeImage[0]) ||
-      null;
-
-    if (uploadedFile) {
-      try {
-        const uploadResult = await uploadOnCloudinary(uploadedFile.path);
-
-        if (uploadResult?.secure_url) {
-          // Delete old image if it exists on Cloudinary
-          if (
-            employeeProfile.employeeImage &&
-            employeeProfile.employeeImage.includes("res.cloudinary.com")
-          ) {
-            const publicId = extractPublicId(employeeProfile.employeeImage);
-            if (publicId) {
-              try {
-                await deleteFromCloudinary(publicId);
-              } catch (err) {
-                console.warn("Failed to delete old image:", err.message);
-              }
-            }
-          }
-          employeeUpdateFields.employeeImage = uploadResult.secure_url;
-        }
-      } catch (err) {
-        console.error("Error uploading image to Cloudinary:", err);
-      }
+    // Handle employee image - use S3 URL from body
+    if (employeeImage) {
+      employeeUpdateFields.employeeImage = employeeImage;
     }
 
     // Update User model
@@ -1353,12 +1287,12 @@ const getSupervisorDetails = async (req, res) => {
       is_engaged: !!warehouse,
       warehouse: warehouse
         ? {
-            _id: warehouse._id,
-            name: warehouse.name,
-            location: warehouse.location,
-            capacity_quintal: warehouse.capacity_quintal,
-            created_at: warehouse.created_at,
-          }
+          _id: warehouse._id,
+          name: warehouse.name,
+          location: warehouse.location,
+          capacity_quintal: warehouse.capacity_quintal,
+          created_at: warehouse.created_at,
+        }
         : null,
 
       // Timestamps
@@ -1497,6 +1431,9 @@ const updateSupervisorDetails = async (req, res) => {
       emergencyContacts,
       hrNotes,
       backgroundCheckStatus,
+
+      // S3 Image URL (uploaded from frontend)
+      employeeImage,
     } = req.body;
 
     // Build User update object (only changed fields)
@@ -1567,34 +1504,9 @@ const updateSupervisorDetails = async (req, res) => {
       });
     }
 
-    // Handle image upload if provided
-    const uploadedFile =
-      req.file || (req.files?.employeeImage && req.files.employeeImage[0]) || null;
-
-    if (uploadedFile) {
-      try {
-        const uploadResult = await uploadOnCloudinary(uploadedFile.path);
-
-        if (uploadResult?.secure_url) {
-          // Delete old image if it exists on Cloudinary
-          if (
-            employeeProfile.employeeImage &&
-            employeeProfile.employeeImage.includes("res.cloudinary.com")
-          ) {
-            const publicId = extractPublicId(employeeProfile.employeeImage);
-            if (publicId) {
-              try {
-                await deleteFromCloudinary(publicId);
-              } catch (err) {
-                console.warn("Failed to delete old image:", err.message);
-              }
-            }
-          }
-          employeeUpdateFields.employeeImage = uploadResult.secure_url;
-        }
-      } catch (err) {
-        console.error("Error uploading image to Cloudinary:", err);
-      }
+    // Handle employee image - use S3 URL from body
+    if (employeeImage) {
+      employeeUpdateFields.employeeImage = employeeImage;
     }
 
     // Update User model
@@ -1838,12 +1750,12 @@ const getStaffDetails = async (req, res) => {
       is_engaged: !!warehouse,
       warehouse: warehouse
         ? {
-            _id: warehouse._id,
-            name: warehouse.name,
-            location: warehouse.location,
-            capacity_quintal: warehouse.capacity_quintal,
-            created_at: warehouse.created_at,
-          }
+          _id: warehouse._id,
+          name: warehouse.name,
+          location: warehouse.location,
+          capacity_quintal: warehouse.capacity_quintal,
+          created_at: warehouse.created_at,
+        }
         : null,
 
       // Timestamps
@@ -1982,6 +1894,9 @@ const updateStaffDetails = async (req, res) => {
       emergencyContacts,
       hrNotes,
       backgroundCheckStatus,
+
+      // S3 Image URL (uploaded from frontend)
+      employeeImage,
     } = req.body;
 
     // Build User update object (only changed fields)
@@ -2052,34 +1967,9 @@ const updateStaffDetails = async (req, res) => {
       });
     }
 
-    // Handle image upload if provided
-    const uploadedFile =
-      req.file || (req.files?.employeeImage && req.files.employeeImage[0]) || null;
-
-    if (uploadedFile) {
-      try {
-        const uploadResult = await uploadOnCloudinary(uploadedFile.path);
-
-        if (uploadResult?.secure_url) {
-          // Delete old image if it exists on Cloudinary
-          if (
-            employeeProfile.employeeImage &&
-            employeeProfile.employeeImage.includes("res.cloudinary.com")
-          ) {
-            const publicId = extractPublicId(employeeProfile.employeeImage);
-            if (publicId) {
-              try {
-                await deleteFromCloudinary(publicId);
-              } catch (err) {
-                console.warn("Failed to delete old image:", err.message);
-              }
-            }
-          }
-          employeeUpdateFields.employeeImage = uploadResult.secure_url;
-        }
-      } catch (err) {
-        console.error("Error uploading image to Cloudinary:", err);
-      }
+    // Handle employee image - use S3 URL from body
+    if (employeeImage) {
+      employeeUpdateFields.employeeImage = employeeImage;
     }
 
     // Update User model

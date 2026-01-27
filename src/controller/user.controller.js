@@ -6,7 +6,6 @@ import FarmerProfiles from "../model/Farmer.model.js";
 import Approval from "../model/Approval.model.js";
 import Warehouses from "../model/Warehouses.model.js";
 import EmployeeProfiles from "../model/Employee.model.js";
-import { uploadOnCloudinary } from "../utils/cloudinary.js";
 
 const dashboardAnalytics = async (req, res) => {
   try {
@@ -180,7 +179,7 @@ const dashboardAnalytics = async (req, res) => {
     const avgProfit =
       totalGrain.length > 0
         ? totalGrain.reduce((sum, g) => sum + (g.avgProfitPerQtl || 0), 0) /
-          totalGrain.length
+        totalGrain.length
         : 0;
 
     return res.status(200).json({
@@ -479,29 +478,29 @@ const categoryTransactionDetails = async (req, res) => {
         // Approval status with complete details
         approval_status: tx.approval_status
           ? {
-              _id: tx.approval_status._id,
-              manager_approval: {
-                user_id: tx.approval_status.manager_approval?.user_id?._id,
-                user_name: tx.approval_status.manager_approval?.user_id?.name,
-                user_role: tx.approval_status.manager_approval?.user_id?.role,
-                status: tx.approval_status.manager_approval?.status,
-                date: tx.approval_status.manager_approval?.date,
-              },
-              supervisor_approval: {
-                user_id: tx.approval_status.supervisor_approval?.user_id?._id,
-                user_name: tx.approval_status.supervisor_approval?.user_id?.name,
-                user_role: tx.approval_status.supervisor_approval?.user_id?.role,
-                status: tx.approval_status.supervisor_approval?.status,
-                date: tx.approval_status.supervisor_approval?.date,
-              },
-              admin_approval: {
-                user_id: tx.approval_status.admin_approval?.user_id?._id,
-                user_name: tx.approval_status.admin_approval?.user_id?.name,
-                user_role: tx.approval_status.admin_approval?.user_id?.role,
-                status: tx.approval_status.admin_approval?.status,
-                date: tx.approval_status.admin_approval?.date,
-              },
-            }
+            _id: tx.approval_status._id,
+            manager_approval: {
+              user_id: tx.approval_status.manager_approval?.user_id?._id,
+              user_name: tx.approval_status.manager_approval?.user_id?.name,
+              user_role: tx.approval_status.manager_approval?.user_id?.role,
+              status: tx.approval_status.manager_approval?.status,
+              date: tx.approval_status.manager_approval?.date,
+            },
+            supervisor_approval: {
+              user_id: tx.approval_status.supervisor_approval?.user_id?._id,
+              user_name: tx.approval_status.supervisor_approval?.user_id?.name,
+              user_role: tx.approval_status.supervisor_approval?.user_id?.role,
+              status: tx.approval_status.supervisor_approval?.status,
+              date: tx.approval_status.supervisor_approval?.date,
+            },
+            admin_approval: {
+              user_id: tx.approval_status.admin_approval?.user_id?._id,
+              user_name: tx.approval_status.admin_approval?.user_id?.name,
+              user_role: tx.approval_status.admin_approval?.user_id?.role,
+              status: tx.approval_status.admin_approval?.status,
+              date: tx.approval_status.admin_approval?.date,
+            },
+          }
           : null,
 
         // Timestamps
@@ -646,10 +645,10 @@ const checkFarmerVerification = async (req, res) => {
 
       return approval
         ? {
-            manager: approval.manager_approval,
-            supervisor: approval.supervisor_approval,
-            admin: approval.admin_approval,
-          }
+          manager: approval.manager_approval,
+          supervisor: approval.supervisor_approval,
+          admin: approval.admin_approval,
+        }
         : null;
     };
 
@@ -983,7 +982,6 @@ const updateProfileVerification = async (req, res) => {
 
     const verification = user.farmerVerification || {};
     const textFields = req.body || {};
-    const files = req.files || {};
 
     // Define which fields are file fields
     const fileFields = [
@@ -1048,39 +1046,31 @@ const updateProfileVerification = async (req, res) => {
       }
     }
 
-    // Process file uploads
+    // Process file fields - now accepts S3 URLs from request body
+    // Frontend uploads to S3 and sends the public URL
     for (const fieldName of fileFields) {
-      const fieldFiles = files[fieldName];
-      if (fieldFiles && fieldFiles.length > 0) {
-        // Check if this field was rejected
+      const s3Url = textFields[fieldName];
+      if (s3Url && s3Url !== "") {
+        // Check if this field was rejected (only allow updates for rejected fields)
         const fieldStatus = verification[fieldName]?.status;
         if (fieldStatus === "rejected" || fieldStatus === "pending") {
           if (fieldName === "khatauni_images") {
-            // Handle multiple khatauni images
-            const uploadedImages = [];
-            for (const file of fieldFiles) {
-              const uploadResult = await uploadOnCloudinary(file.path);
-              if (uploadResult) {
-                uploadedImages.push({
-                  khatauni_id: `KH-${Date.now()}-${Math.random()
-                    .toString(36)
-                    .substr(2, 9)}`,
-                  image_url: uploadResult.secure_url,
-                });
-              }
-            }
+            // Handle multiple khatauni images - expects array of URLs or single URL
+            let khatauniUrls = Array.isArray(s3Url) ? s3Url : [s3Url];
+            const uploadedImages = khatauniUrls.map((url, index) => ({
+              khatauni_id: `KH-${Date.now()}-${index}-${Math.random()
+                .toString(36)
+                .substr(2, 9)}`,
+              image_url: url,
+            }));
             if (uploadedImages.length > 0) {
               farmerProfile.khatauni_images = uploadedImages;
               updatedFields.push(fieldName);
             }
           } else {
-            // Handle single file upload
-            const file = fieldFiles[0];
-            const uploadResult = await uploadOnCloudinary(file.path);
-            if (uploadResult) {
-              farmerProfile[fieldName] = uploadResult.secure_url;
-              updatedFields.push(fieldName);
-            }
+            // Handle single file URL
+            farmerProfile[fieldName] = s3Url;
+            updatedFields.push(fieldName);
           }
 
           // Reset verification status to pending
@@ -1295,21 +1285,21 @@ const getFarmerDetails = async (req, res) => {
       dob: farmerUser.dob,
       registration_date: farmerUser.registration_date,
       is_active: farmerUser.is_active !== undefined ? farmerUser.is_active : true,
-      
+
       // Verification status
       overallStatus: farmerUser.farmerVerification?.overallStatus || "pending",
-      
+
       // Profile data
       farmerId: profile.farmerId,
       user_image: profile.user_image,
-      
+
       // Identity documents
       aadhaar_number: profile.aadhaar_number,
       aadhaar_image: profile.aadhaar_image,
       pan_number: profile.pan_number,
       pan_image: profile.pan_image,
       khatauni_images: profile.khatauni_images,
-      
+
       // Address details
       address: profile.address,
       tehsil: profile.tehsil,
@@ -1317,10 +1307,10 @@ const getFarmerDetails = async (req, res) => {
       state: profile.state,
       landmark: profile.landmark,
       pin_code: profile.pin_code,
-      
+
       // Land details
       land_size: profile.land_size,
-      
+
       // Bank details
       bank_passbook_img: profile.bank_passbook_img,
       account_number: profile.account_number,
@@ -1328,7 +1318,7 @@ const getFarmerDetails = async (req, res) => {
       account_holder: profile.account_holder,
       bank_name: profile.bank_name,
       branch_name: profile.branch_name,
-      
+
       // Nominee details
       nominee_name: profile.nominee_name,
       nominee_dob: profile.nominee_dob,
@@ -1396,7 +1386,6 @@ const UpdateFarmerDetails = async (req, res) => {
     }
 
     const textFields = req.body || {};
-    const files = req.files || {};
 
     // Define which fields are file fields
     const fileFields = [
@@ -1467,36 +1456,28 @@ const UpdateFarmerDetails = async (req, res) => {
       }
     }
 
-    // Process file uploads
+    // Process file fields - now accepts S3 URLs from request body
+    // Frontend uploads to S3 and sends the public URL
     for (const fieldName of fileFields) {
-      const fieldFiles = files[fieldName];
-      if (fieldFiles && fieldFiles.length > 0) {
+      const s3Url = textFields[fieldName];
+      if (s3Url && s3Url !== "") {
         if (fieldName === "khatauni_images") {
-          // Handle multiple khatauni images
-          const uploadedImages = [];
-          for (const file of fieldFiles) {
-            const uploadResult = await uploadOnCloudinary(file.path);
-            if (uploadResult) {
-              uploadedImages.push({
-                khatauni_id: `KH-${Date.now()}-${Math.random()
-                  .toString(36)
-                  .substr(2, 9)}`,
-                image_url: uploadResult.secure_url,
-              });
-            }
-          }
+          // Handle multiple khatauni images - expects array of URLs or single URL
+          let khatauniUrls = Array.isArray(s3Url) ? s3Url : [s3Url];
+          const uploadedImages = khatauniUrls.map((url, index) => ({
+            khatauni_id: `KH-${Date.now()}-${index}-${Math.random()
+              .toString(36)
+              .substr(2, 9)}`,
+            image_url: url,
+          }));
           if (uploadedImages.length > 0) {
             farmerProfile.khatauni_images = uploadedImages;
             updatedFields.push(fieldName);
           }
         } else {
-          // Handle single file upload
-          const file = fieldFiles[0];
-          const uploadResult = await uploadOnCloudinary(file.path);
-          if (uploadResult) {
-            farmerProfile[fieldName] = uploadResult.secure_url;
-            updatedFields.push(fieldName);
-          }
+          // Handle single file URL
+          farmerProfile[fieldName] = s3Url;
+          updatedFields.push(fieldName);
         }
       }
     }

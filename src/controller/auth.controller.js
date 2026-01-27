@@ -144,106 +144,6 @@ const getProfile = async (req, res) => {
   }
 };
 
-// send OTP
-const sendOTP = async (req, res) => {
-  try {
-    const { email, phone_number } = req.body;
-
-    const user = await User.findOne({
-      $or: [{ email }, { phone_number }],
-    });
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const otpSend = await sendEmailOTP(email);
-
-    if (!otpSend) {
-      return res.status(500).json({ message: "Failed to send OTP" });
-    }
-
-    return res.status(200).json({ message: "OTP sent successfully" });
-  } catch (error) {
-    console.error("Error sending OTP:", error);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-};
-
-// verify OTP
-const verifyOTP = async (req, res) => {
-  try {
-    const { email , phone, otp } = req.body;
-
-    const otpRecord=await OTP.findOne(
-      { $and: [{ email:email }, { phone_number:phone }] }
-    );
-
-    if (!otpRecord) {
-      return res.status(404).json({ message: "OTP not found" });
-    }
-
-    if (otpRecord.otp !== otp) {
-      return res.status(401).json({ message: "Invalid OTP" });
-    }
-
-    await OTP.deleteOne({ _id: otpRecord._id });
-
-    return res.status(200).json({ message: "OTP verified successfully" });
-  } catch (error) {
-    console.error("Error verifying OTP:", error);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-};
-
-// reset password
-const resetPassword = async (req, res) => {
-  try {
-    const { email, phone_number, newPassword } = req.body;
-
-    const user = await User.findOne({
-      $and: [{ email }, { phone_number }],
-    });
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    user.password = await encryptPassword(newPassword);
-    await user.save();
-
-    return res
-      .status(200)
-      .json({ message: `Password reset for ${email} successfully` });
-  } catch (error) {
-    console.error("Error resetting password:", error);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-};
-
-// reset pin
-const resetPin = async (req, res) => {
-  try {
-    const { email, phone_number, newPin } = req.body;
-
-    const user = await User.findOne({
-      $and: [{ email }, { phone_number }],
-    });
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    user.account_pin = await encryptPassword(newPin);
-    await user.save();
-
-    return res.status(200).json({ message: "PIN updated successfully" });
-  } catch (error) {
-    console.error("Error resetting pin:", error);
-    return res.status(500).json({ message: "Internal server error" });
-  }
-};
-
 const getCompleteProfile = async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -298,14 +198,209 @@ const getCompleteProfile = async (req, res) => {
   }
 };
 
+// send OTP
+const sendOTP = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const isValidPassword = await decryptPassword(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ message: "Invalid password" });
+    }
+
+    const otpSend = await sendEmailOTP(email);
+
+    if (!otpSend) {
+      return res.status(500).json({ message: "Failed to send OTP" });
+    }
+
+     const token = await generateToken(user._id);
+    return res.status(200).json({ message: "OTP sent successfully", token });
+  } catch (error) {
+    console.error("Error sending OTP:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// verify OTP
+const verifyOTP = async (req, res) => {
+  try {
+    const { email , phone, otp } = req.body;
+
+    const otpRecord=await OTP.findOne(
+      { $and: [{ email:email }, { phone_number:phone }] }
+    );
+
+    if (!otpRecord) {
+      return res.status(404).json({ message: "OTP not found" });
+    }
+
+    if (otpRecord.otp !== otp) {
+      return res.status(401).json({ message: "Invalid OTP" });
+    }
+
+    await OTP.deleteOne({ _id: otpRecord._id });
+
+    return res.status(200).json({ message: "OTP verified successfully" });
+  } catch (error) {
+    console.error("Error verifying OTP:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// reset pin
+const resetPin = async (req, res) => {
+  try {
+    const { token, newPin } = req.body;
+
+    if (!token || !newPin) {
+      return res.status(400).json({ message: "Token and new PIN are required" });
+    }
+
+    const decoded = verifyToken(token);
+    
+    if (!decoded || !decoded.userId) {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+
+    const userId = decoded.userId;  
+
+    const user = await User.findOne({ _id: userId });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.account_pin = await encryptPassword(newPin);
+    await user.save();
+
+    return res.status(200).json({ message: "PIN updated successfully" });
+  } catch (error) {
+    console.error("Error resetting pin:", error);
+    if (error.name === "JsonWebTokenError" || error.name === "TokenExpiredError") {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+
+// send OTP for password reset
+const sendOTPForPasswordReset = async (req, res) => {
+  try {
+    const { email, phone_number } = req.body;
+
+    if (!email || !phone_number) {
+      return res.status(400).json({ message: "Email and phone number are required" });
+    }
+
+    const user = await User.findOne({ 
+      $and: [{ email }, { phone_number }] 
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found with provided email and phone number" });
+    }
+
+    const otpSend = await sendEmailOTP(email);
+
+    if (!otpSend) {
+      return res.status(500).json({ message: "Failed to send OTP" });
+    }
+
+    const token = await generateToken(user._id);
+    return res.status(200).json({ message: "OTP sent successfully", token });
+  } catch (error) {
+    console.error("Error sending OTP:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// verify OTP for password reset
+const verifyOTPForPasswordReset = async (req, res) => {
+  try {
+    const { email, phone_number, otp } = req.body;
+    console.log(email, phone_number, otp);
+
+    if (!email || !phone_number || !otp) {
+      return res.status(400).json({ message: "Email, phone number, and OTP are required" });
+    }
+
+    const otpRecord = await OTP.findOne(
+      { $or: [{ email }, { phone_number }] }
+    );
+
+    if (!otpRecord) {
+      return res.status(404).json({ message: "OTP not found or expired" });
+    }
+
+    if (otpRecord.otp !== otp) {
+      return res.status(401).json({ message: "Invalid OTP" });
+    }
+
+    await OTP.deleteOne({ _id: otpRecord._id });
+
+    return res.status(200).json({ message: "OTP verified successfully" });
+  } catch (error) {
+    console.error("Error verifying OTP:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// reset password
+const resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ message: "Token and new password are required" });
+    }
+
+    const decoded = verifyToken(token);
+    
+    if (!decoded || !decoded.userId) {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+
+    const userId = decoded.userId;
+
+    const user = await User.findOne({ _id: userId });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.password = await encryptPassword(newPassword);
+    await user.save();
+
+    return res
+      .status(200)
+      .json({ message: "Password reset successfully" });
+  } catch (error) {
+    console.error("Error resetting password:", error);
+    if (error.name === "JsonWebTokenError" || error.name === "TokenExpiredError") {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 export {
   login,
   checkToken,
   pinVerification,
   getProfile,
   getCompleteProfile,
+  resetPin,
   sendOTP,
   verifyOTP,
+  sendOTPForPasswordReset,
+  verifyOTPForPasswordReset,
   resetPassword,
-  resetPin,
 };

@@ -4,11 +4,6 @@ import { encryptPassword } from "../utils/bcrypt.js";
 import { generateToken } from "../utils/jwt.js";
 import { generateFarmerId } from "../utils/miscellaneous.js";
 import StorageBucketModel from "../model/StorageBucket.model.js";
-import {
-  deleteFromCloudinary,
-  extractPublicId,
-  uploadOnCloudinary,
-} from "../utils/cloudinary.js";
 
 // Step 1: Personal Information
 const registerStep1 = async (req, res) => {
@@ -29,7 +24,7 @@ const registerStep1 = async (req, res) => {
 
     const farmerId = await generateFarmerId();
 
-    const verificationFields= {
+    const verificationFields = {
       overallStatus: "pending",
       aadhaar_number: { status: "pending" },
       pan_number: { status: "pending" },
@@ -163,18 +158,18 @@ const registerStep2 = async (req, res) => {
   }
 };
 
-// Step 3: Documents & IDs
+// Step 3: Documents & IDs (accepts S3 public URLs from frontend)
 const registerStep3 = async (req, res) => {
   try {
-    const { aadhaar_number, pan_number, land_size } = req.body;
-
-    // Support both "khatauni_ids[]" and "khatauni_ids"
-    const khatauni_ids =
-      req.body["khatauni_ids[]"] || req.body.khatauni_ids || [];
-
-    const khatauniIdsArray = Array.isArray(khatauni_ids)
-      ? khatauni_ids
-      : [khatauni_ids].filter(Boolean);
+    const {
+      aadhaar_number,
+      pan_number,
+      land_size,
+      khatauni_entries, 
+      userImage,        // S3 public URL
+      aadhaarImg,       // S3 public URL
+      panImg,           // S3 public URL
+    } = req.body;
 
     if (!pan_number) {
       return res.status(400).json({ message: "PAN number is required" });
@@ -182,7 +177,7 @@ const registerStep3 = async (req, res) => {
 
     const userId = req.user.userId; // from auth middleware
 
-    // Find farmer profile using the user id (not Farmer._id)
+    // Find farmer profile using the user id
     const farmerProfile = await Farmer.findOne({ user: userId }).select(
       "aadhaar_image pan_image khatauni_images user_image"
     );
@@ -191,91 +186,25 @@ const registerStep3 = async (req, res) => {
       return res.status(404).json({ message: "Farmer profile not found" });
     }
 
-    // --- Delete old images from Cloudinary ---
-    const allOldImages = [];
+    // Note: Old images in S3 can be cleaned up via a separate cleanup job or S3 lifecycle rules
+    // We no longer delete from Cloudinary since we're using S3 now
 
-    if (farmerProfile.user_image) allOldImages.push(farmerProfile.user_image);
-    if (farmerProfile.aadhaar_image)
-      allOldImages.push(farmerProfile.aadhaar_image);
-    if (farmerProfile.pan_image) allOldImages.push(farmerProfile.pan_image);
-
-    if (
-      farmerProfile.khatauni_images &&
-      Array.isArray(farmerProfile.khatauni_images)
-    ) {
-      farmerProfile.khatauni_images.forEach((img) => {
-        if (img.image_url) allOldImages.push(img.image_url);
-      });
-    }
-
-    for (const img of allOldImages) {
-      const publicId = extractPublicId(img);
-      if (publicId) {
-        try {
-          await deleteFromCloudinary(publicId);
-        } catch (delErr) {
-          // log but continue — deletion failure shouldn't block the update
-          console.warn(
-            "Failed to delete image from Cloudinary:",
-            publicId,
-            delErr
-          );
-        }
-      }
-    }
-
-    // --- Upload new images (order of pushes determines mapping later) ---
-    const uploadTasks = [];
-
-    if (req.files?.userImage?.[0]) {
-      uploadTasks.push(uploadOnCloudinary(req.files.userImage[0].path));
-    }
-
-    if (req.files?.aadhaarImg?.[0]) {
-      uploadTasks.push(uploadOnCloudinary(req.files.aadhaarImg[0].path));
-    }
-
-    if (req.files?.panImg?.[0]) {
-      uploadTasks.push(uploadOnCloudinary(req.files.panImg[0].path));
-    }
-
-    const khatauniImages =
-      req.files?.["khatauni_images[]"] || req.files?.khatauni_images || [];
-
-    if (Array.isArray(khatauniImages)) {
-      khatauniImages.forEach((img) => {
-        uploadTasks.push(uploadOnCloudinary(img.path));
-      });
-    }
-
-    // Wait for all uploads; if any rejects, Promise.all will throw and we return 500
-    const uploadedFiles = uploadTasks.length
-      ? await Promise.all(uploadTasks)
+    // Prepare khatauni entries from the frontend data
+    const khatauniEntries = Array.isArray(khatauni_entries)
+      ? khatauni_entries.map((entry) => ({
+        khatauni_id: entry.id,
+        image_url: entry.imageUrl || null,
+      }))
       : [];
 
-    // Map uploaded files back in the same order as pushed
-    let index = 0;
-    const userImageUrl = uploadedFiles[index++]?.secure_url || null;
-    const aadhaarImageUrl = uploadedFiles[index++]?.secure_url || null;
-    const panImageUrl = uploadedFiles[index++]?.secure_url || null;
-
-    const khatauniEntries = [];
-    for (let i = 0; i < khatauniIdsArray.length; i++) {
-      khatauniEntries.push({
-        khatauni_id: khatauniIdsArray[i],
-        image_url: uploadedFiles[index++]?.secure_url || null,
-      });
-    }
-
-    // --- FINAL UPDATE (Only after ALL uploads succeed) ---
+    // --- FINAL UPDATE with S3 URLs ---
     const updateData = {
       aadhaar_number,
       pan_number,
       land_size,
-      // only overwrite fields if we got new urls (null will explicitly set null if upload missing)
-      user_image: userImageUrl,
-      aadhaar_image: aadhaarImageUrl,
-      pan_image: panImageUrl,
+      user_image: userImage || null,
+      aadhaar_image: aadhaarImg || null,
+      pan_image: panImg || null,
       khatauni_images: khatauniEntries,
     };
 
@@ -311,7 +240,7 @@ const registerStep3 = async (req, res) => {
   }
 };
 
-// Step 4: Bank Details
+// Step 4: Bank Details (accepts S3 public URLs from frontend)
 const registerStep4 = async (req, res) => {
   try {
     const {
@@ -320,41 +249,22 @@ const registerStep4 = async (req, res) => {
       account_holder,
       bank_name,
       branch_name,
+      bank_passbook_img, // S3 public URL
     } = req.body;
 
     const userId = req.user.userId; // from authMiddleware
 
     // Find FarmerProfile by linked user
-    const farmerProfile = await Farmer.findOne({ user: userId }).select(
-      "bank_passbook_img"
-    );
+    const farmerProfile = await Farmer.findOne({ user: userId });
 
     if (!farmerProfile) {
       return res.status(404).json({ message: "Farmer profile not found" });
     }
 
-    // --- Delete old image if present ---
-    if (farmerProfile.bank_passbook_img) {
-      const publicId = extractPublicId(farmerProfile.bank_passbook_img);
-      if (publicId) {
-        try {
-          await deleteFromCloudinary(publicId);
-        } catch (err) {
-          console.warn("Failed to delete old image:", err.message);
-        }
-      }
-    }
+    // Note: Old images in S3 can be cleaned up via a separate cleanup job or S3 lifecycle rules
+    // We no longer delete from Cloudinary since we're using S3 now
 
-    // --- Upload new image if provided ---
-    let bankPassbookImageUrl = farmerProfile.bank_passbook_img;
-    if (req.files?.bank_passbook_img?.[0]) {
-      const uploadResult = await uploadOnCloudinary(
-        req.files.bank_passbook_img[0].path
-      );
-      bankPassbookImageUrl = uploadResult?.secure_url || bankPassbookImageUrl;
-    }
-
-    // --- Update FarmerProfile ---
+    // --- Update FarmerProfile with S3 URL ---
     await Farmer.findByIdAndUpdate(
       farmerProfile._id,
       {
@@ -363,7 +273,7 @@ const registerStep4 = async (req, res) => {
         account_holder,
         bank_name,
         branch_name,
-        bank_passbook_img: bankPassbookImageUrl,
+        bank_passbook_img: bank_passbook_img || null,
       },
       { new: true }
     );
@@ -372,7 +282,7 @@ const registerStep4 = async (req, res) => {
     await User.findByIdAndUpdate(userId, { step_completed: 4 });
 
     return res.status(200).json({
-      message: "Step 4  saved successfully",
+      message: "Step 4 saved successfully",
       step_completed: 4,
     });
   } catch (error) {
@@ -383,7 +293,7 @@ const registerStep4 = async (req, res) => {
   }
 };
 
-// Step 5: Nominee
+// Step 5: Nominee (accepts S3 public URLs from frontend)
 const registerStep5 = async (req, res) => {
   try {
     const {
@@ -396,64 +306,24 @@ const registerStep5 = async (req, res) => {
       nominee_relation,
       nominee_gender,
       nominee_address,
+      nominee_image,         // S3 public URL
+      nominee_aadhaar_image, // S3 public URL
+      nominee_pan_image,     // S3 public URL
     } = req.body;
 
     const userId = req.user.userId;
 
-    // destructure uploaded files
-    const { nominee_image, nominee_aadhaar_image, nominee_pan_image } =
-      req.files || {};
-
     // Find farmer profile linked to this user
-    const farmerProfile = await Farmer.findOne({ user: userId }).select(
-      "nominee_image nominee_aadhaar_image nominee_pan_image"
-    );
+    const farmerProfile = await Farmer.findOne({ user: userId });
 
     if (!farmerProfile) {
       return res.status(404).json({ message: "Farmer profile not found" });
     }
 
-    // --- DELETE OLD IMAGES ---
-    const oldImages = [
-      farmerProfile.nominee_image,
-      farmerProfile.nominee_aadhaar_image,
-      farmerProfile.nominee_pan_image,
-    ];
+    // Note: Old images in S3 can be cleaned up via a separate cleanup job or S3 lifecycle rules
+    // We no longer delete from Cloudinary since we're using S3 now
 
-    for (const img of oldImages) {
-      if (img) {
-        const publicId = extractPublicId(img);
-        if (publicId) {
-          try {
-            await deleteFromCloudinary(publicId);
-          } catch (err) {
-            console.warn("Error deleting old nominee image:", err.message);
-          }
-        }
-      }
-    }
-
-    // --- UPLOAD NEW IMAGES IF AVAILABLE ---
-    let nomineeImageUrl = farmerProfile.nominee_image;
-    let nomineeAadhaarImageUrl = farmerProfile.nominee_aadhaar_image;
-    let nomineePanImageUrl = farmerProfile.nominee_pan_image;
-
-    if (nominee_image?.[0]) {
-      const uploaded = await uploadOnCloudinary(nominee_image[0].path);
-      nomineeImageUrl = uploaded?.secure_url || nomineeImageUrl;
-    }
-
-    if (nominee_aadhaar_image?.[0]) {
-      const uploaded = await uploadOnCloudinary(nominee_aadhaar_image[0].path);
-      nomineeAadhaarImageUrl = uploaded?.secure_url || nomineeAadhaarImageUrl;
-    }
-
-    if (nominee_pan_image?.[0]) {
-      const uploaded = await uploadOnCloudinary(nominee_pan_image[0].path);
-      nomineePanImageUrl = uploaded?.secure_url || nomineePanImageUrl;
-    }
-
-    // --- UPDATE FARMER PROFILE ---
+    // --- UPDATE FARMER PROFILE with S3 URLs ---
     await Farmer.findByIdAndUpdate(
       farmerProfile._id,
       {
@@ -466,9 +336,9 @@ const registerStep5 = async (req, res) => {
         nominee_relation,
         nominee_gender,
         nominee_address,
-        nominee_image: nomineeImageUrl,
-        nominee_aadhaar_image: nomineeAadhaarImageUrl,
-        nominee_pan_image: nomineePanImageUrl,
+        nominee_image: nominee_image || null,
+        nominee_aadhaar_image: nominee_aadhaar_image || null,
+        nominee_pan_image: nominee_pan_image || null,
       },
       { new: true }
     );

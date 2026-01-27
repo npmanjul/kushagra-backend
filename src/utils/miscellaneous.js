@@ -73,14 +73,13 @@ const generateEmployeeId = async () => {
 const sendEmailService = async (to, subject, html) => {
   try {
     const mailOptions = {
-      from: `"Grain Bank" <${process.env.EMAIL_USER}>`,
+      from: `"Kushagra Bhumitra FPO" <${process.env.EMAIL_USER}>`,
       to,
       subject,
-      html 
+      html,
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log("Email sent:", info.messageId);
     return info;
   } catch (error) {
     console.error("Email error:", error);
@@ -104,131 +103,180 @@ const sendEmailOTP = async (email) => {
       expiry: new Date(Date.now() + 10 * 60 * 1000), // 10 min expiry
     });
 
-    // Beautiful responsive HTML email template
+    // Beautiful agriculture-themed HTML email template
     const htmlTemplate = `
     <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Your OTP Code</title>
-    </head>
-    <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7fa;">
-      <table role="presentation" style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td align="center" style="padding: 40px 20px;">
-            <table role="presentation" style="max-width: 480px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);">
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Kushagra FPO - Verification Code</title>
+  <style>
+    @media only screen and (max-width: 600px) {
+      .main-table { width: 100% !important; }
+      .content-padding { padding: 30px 20px !important; }
+      .header-padding { padding: 35px 20px !important; }
+      .otp-code { font-size: 36px !important; letter-spacing: 12px !important; }
+      .title { font-size: 24px !important; }
+      .feature-box { display: block !important; width: 100% !important; margin-bottom: 10px !important; }
+      .feature-cell { display: block !important; width: 100% !important; padding: 8px 0 !important; }
+      .footer-padding { padding: 30px 20px !important; }
+      .contact-table td { display: block !important; width: 100% !important; border-right: none !important; padding: 15px 0 !important; border-bottom: 1px solid rgba(255,255,255,0.1) !important; }
+      .contact-table td:last-child { border-bottom: none !important; }
+    }
+  </style>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(180deg, #f0fdf4 0%, #ecfccb 100%); min-height: 100vh;">
+  
+  <table role="presentation" style="width: 100%; border-collapse: collapse;">
+    <tr>
+      <td align="center" style="padding: 20px 10px;">
+        
+        <!-- Main Container -->
+        <table role="presentation" class="main-table" style="max-width: 520px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 20px; box-shadow: 0 20px 50px rgba(34, 197, 94, 0.15); overflow: hidden;">
+          
+          <!-- Top Border -->
+          <tr>
+            <td style="height: 6px; background: linear-gradient(90deg, #22c55e, #84cc16, #22c55e);"></td>
+          </tr>
+
+          <!-- Header -->
+          <tr>
+            <td class="header-padding" style="padding: 40px 30px 35px; text-align: center; background: linear-gradient(145deg, #15803d 0%, #166534 100%);">
               
-              <!-- Header -->
-              <tr>
-                <td style="padding: 40px 40px 30px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 16px 16px 0 0;">
-                  <div style="width: 70px; height: 70px; margin: 0 auto 20px; background-color: rgba(255, 255, 255, 0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
-                    <img src="https://img.icons8.com/fluency/96/lock-2.png" alt="Security" style="width: 40px; height: 40px;" />
-                  </div>
-                  <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">
-                    Verification Code
-                  </h1>
-                  <p style="margin: 10px 0 0; color: rgba(255, 255, 255, 0.85); font-size: 14px;">
-                    Grain Bank Security
-                  </p>
-                </td>
-              </tr>
+              <div style="width: 80px; height: 80px; margin: 0 auto 20px; background: rgba(255,255,255,0.15); border-radius: 50%; line-height: 80px; border: 3px solid rgba(255,255,255,0.3);">
+                <span style="font-size: 40px;">🌾</span>
+              </div>
+              
+              <h1 class="title" style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 800;">
+                Kushagra FPO
+              </h1>
+              <p style="margin: 8px 0 0; color: #bbf7d0; font-size: 14px; font-weight: 600;">
+                Verification Code | सत्यापन कोड
+              </p>
+            </td>
+          </tr>
 
-              <!-- Body -->
-              <tr>
-                <td style="padding: 40px;">
-                  <p style="margin: 0 0 25px; color: #4a5568; font-size: 15px; line-height: 1.6; text-align: center;">
-                    Hello! We received a request to verify your identity. Use the code below to complete your verification:
-                  </p>
+          <!-- Body -->
+          <tr>
+            <td class="content-padding" style="padding: 40px 35px;">
+              
+              <!-- Greeting -->
+              <div style="text-align: center; margin-bottom: 25px;">
+                <p style="margin: 0; color: #15803d; font-size: 20px; font-weight: 700;">
+                  🙏 Namaste!
+                </p>
+                <p style="margin: 10px 0 0; color: #4b5563; font-size: 14px; line-height: 1.7;">
+                  Apne account ko verify karne ke liye neeche diya gaya code use karein।
+                </p>
+              </div>
 
-                  <!-- OTP Code Box -->
-                  <div style="background: linear-gradient(135deg, #f6f8fb 0%, #eef1f5 100%); border: 2px dashed #d1d9e6; border-radius: 12px; padding: 25px; text-align: center; margin: 0 0 25px;">
-                    <p style="margin: 0 0 8px; color: #718096; font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600;">
-                      Your OTP Code
-                    </p>
-                    <div style="font-size: 36px; font-weight: 800; letter-spacing: 12px; color: #667eea; font-family: 'Courier New', monospace; padding-left: 12px;">
-                      ${otp}
-                    </div>
-                  </div>
+              <!-- OTP Box -->
+              <div style="background: linear-gradient(135deg, #f0fdf4, #dcfce7); border: 2px solid #22c55e; border-radius: 16px; padding: 25px; text-align: center; margin-bottom: 25px;">
+                
+                <p style="margin: 0 0 15px; color: #166534; font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700;">
+                  🔐 Your OTP Code
+                </p>
+                
+                <div class="otp-code" style="font-size: 42px; font-weight: 900; letter-spacing: 16px; color: #15803d; font-family: 'Courier New', monospace; padding-left: 16px;">
+                  ${otp}
+                </div>
+                
+                <p style="margin: 15px 0 0; color: #16a34a; font-size: 12px; font-weight: 600;">
+                  Valid for 10 minutes only | केवल 10 मिनट के लिए
+                </p>
+              </div>
 
-                  <!-- Timer Warning -->
-                  <div style="background-color: #fff8e6; border-left: 4px solid #f6ad55; border-radius: 0 8px 8px 0; padding: 15px 20px; margin: 0 0 25px;">
-                    <table role="presentation" style="width: 100%; border-collapse: collapse;">
-                      <tr>
-                        <td style="width: 30px; vertical-align: top;">
-                          <span style="font-size: 18px;">⏱️</span>
-                        </td>
-                        <td style="vertical-align: top;">
-                          <p style="margin: 0; color: #c05621; font-size: 13px; font-weight: 600;">
-                            This code expires in 10 minutes
-                          </p>
-                          <p style="margin: 5px 0 0; color: #975a16; font-size: 12px;">
-                            Don't share this code with anyone.
-                          </p>
-                        </td>
-                      </tr>
-                    </table>
-                  </div>
+              <!-- Warning -->
+              <div style="background: #fef3c7; border-radius: 12px; padding: 15px 18px; margin-bottom: 25px; border-left: 4px solid #f59e0b;">
+                <p style="margin: 0; color: #92400e; font-size: 13px; line-height: 1.6;">
+                  ⚠️ <strong>Yeh code kisi ko na batayein!</strong> Kushagra FPO kabhi phone pe code nahi mangta।
+                </p>
+              </div>
 
-                  <!-- Security Note -->
-                  <div style="background-color: #f0fff4; border-radius: 8px; padding: 15px 20px; text-align: center;">
-                    <p style="margin: 0; color: #276749; font-size: 12px;">
-                      🔒 If you didn't request this code, please ignore this email or contact support immediately.
-                    </p>
-                  </div>
-                </td>
-              </tr>
+              <!-- Security Tips -->
+              <div style="background: #f9fafb; border-radius: 12px; padding: 18px;">
+                <p style="margin: 0 0 12px; color: #374151; font-size: 13px; font-weight: 700;">
+                  🛡️ Security Tips:
+                </p>
+                <p style="margin: 0; color: #6b7280; font-size: 12px; line-height: 1.8;">
+                  ✓ OTP share na karein<br>
+                  ✓ Fake calls se bachein<br>
+                  ✓ Sirf kushagrafpo.in use karein
+                </p>
+              </div>
 
-              <!-- Footer -->
-              <tr>
-                <td style="padding: 25px 40px; background-color: #f8fafc; border-radius: 0 0 16px 16px; border-top: 1px solid #e2e8f0;">
-                  <table role="presentation" style="width: 100%; border-collapse: collapse;">
-                    <tr>
-                      <td style="text-align: center;">
-                        <p style="margin: 0 0 10px; color: #718096; font-size: 13px; font-weight: 600;">
-                          Grain Bank
-                        </p>
-                        <p style="margin: 0 0 15px; color: #a0aec0; font-size: 11px;">
-                          Secure • Reliable • Trusted
-                        </p>
-                        <div style="margin: 0 0 15px;">
-                          <a href="#" style="display: inline-block; margin: 0 8px; color: #667eea; text-decoration: none;">
-                            <img src="https://img.icons8.com/fluency/32/facebook-new.png" alt="Facebook" style="width: 24px; height: 24px;" />
-                          </a>
-                          <a href="#" style="display: inline-block; margin: 0 8px; color: #667eea; text-decoration: none;">
-                            <img src="https://img.icons8.com/fluency/32/twitter.png" alt="Twitter" style="width: 24px; height: 24px;" />
-                          </a>
-                          <a href="#" style="display: inline-block; margin: 0 8px; color: #667eea; text-decoration: none;">
-                            <img src="https://img.icons8.com/fluency/32/instagram-new.png" alt="Instagram" style="width: 24px; height: 24px;" />
-                          </a>
-                        </div>
-                        <p style="margin: 0; color: #cbd5e0; font-size: 10px;">
-                          © ${new Date().getFullYear()} Grain Bank. All rights reserved.
-                        </p>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
+              <!-- Didn't Request -->
+              <div style="margin-top: 25px; text-align: center;">
+                <p style="margin: 0; color: #9ca3af; font-size: 12px; line-height: 1.6;">
+                  Agar aapne yeh request nahi ki, toh is email ko ignore karein।
+                </p>
+              </div>
 
-            </table>
+            </td>
+          </tr>
 
-            <!-- Help Text -->
-            <p style="margin: 25px 0 0; color: #a0aec0; font-size: 11px; text-align: center;">
-              Need help? Contact us at <a href="mailto:support@grainbank.com" style="color: #667eea; text-decoration: none;">support@grainbank.com</a>
-            </p>
-          </td>
-        </tr>
-      </table>
-    </body>
-    </html>
+          <!-- Footer -->
+          <tr>
+            <td class="footer-padding" style="padding: 30px 35px; background: linear-gradient(145deg, #15803d, #14532d); text-align: center;">
+              
+              <p style="margin: 0 0 15px; color: #ffffff; font-size: 18px; font-weight: 800;">
+                🌾 Kushagra FPO
+              </p>
+              
+              <p style="margin: 0 0 20px; color: #bbf7d0; font-size: 12px;">
+                Kisan Ki Seva, Desh Ki Seva
+              </p>
+              
+              <!-- Contact -->
+              <table role="presentation" class="contact-table" style="width: 100%; border-collapse: collapse; background: rgba(255,255,255,0.1); border-radius: 10px; margin-bottom: 20px;">
+                <tr>
+                  <td style="padding: 12px; text-align: center; border-right: 1px solid rgba(255,255,255,0.2);">
+                    <p style="margin: 0; color: #ffffff; font-size: 13px;">📞 +91-XXXXXXXXXX</p>
+                  </td>
+                  <td style="padding: 12px; text-align: center;">
+                    <p style="margin: 0; color: #ffffff; font-size: 13px;">🌐 kushagrafpo.in</p>
+                  </td>
+                </tr>
+              </table>
+              
+              <p style="margin: 0; color: rgba(255,255,255,0.6); font-size: 11px; line-height: 1.6;">
+                © ${new Date().getFullYear()} Kushagra FPO. All rights reserved.<br>
+                🇮🇳 Made for Indian Farmers
+              </p>
+              
+            </td>
+          </tr>
+
+        </table>
+
+        <!-- Bottom Links -->
+        <table role="presentation" style="max-width: 520px; width: 100%; margin-top: 15px;">
+          <tr>
+            <td style="text-align: center; padding: 10px;">
+              <p style="margin: 0; color: #9ca3af; font-size: 10px;">
+                <a href="https://kushagrafpo.in" style="color: #16a34a; text-decoration: none;">Website</a> • 
+                <a href="https://kushagrafpo.in/privacy" style="color: #16a34a; text-decoration: none;">Privacy</a> • 
+                <a href="https://kushagrafpo.in/terms" style="color: #16a34a; text-decoration: none;">Terms</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>
     `;
 
     // Send email using your email utility
     const emailSent = await sendEmailService(
       email,
-      "🔐 Your Grain Bank Verification Code",
-      htmlTemplate
+      "🔐 Your Kushagra Bhumitra FPO Verification Code",
+      htmlTemplate,
     );
 
     if (!emailSent) {
