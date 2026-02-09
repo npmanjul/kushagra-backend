@@ -28,6 +28,7 @@ import withdrawalRouter from "./src/router/withdrawal.router.js";
 import overviewRouter from "./src/router/overview.router.js";
 import generatePDFRouter from "./src/router/generatePDF.router.js";
 import awsRouter from "./src/router/aws.router.js";
+import contactRouter from "./src/router/contact.router.js";
 
 // Routes
 app.use(`${BACKEND_URL}/auth`, authRoutes);
@@ -46,6 +47,7 @@ app.use(`${BACKEND_URL}/withdrawal`, withdrawalRouter);
 app.use(`${BACKEND_URL}/overview`, overviewRouter);
 app.use(`${BACKEND_URL}/generatepdf`, generatePDFRouter);
 app.use(`${BACKEND_URL}/aws`, awsRouter);
+app.use(`${BACKEND_URL}/contact`,contactRouter);
 
 
 app.use((req, res) => {

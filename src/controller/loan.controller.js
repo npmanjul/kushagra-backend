@@ -375,4 +375,5 @@ const loanApply = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
-export { getAvailableLoan , loanCalculation , loanApply};
+
+export { getAvailableLoan , loanCalculation , loanApply };
