@@ -1116,7 +1116,6 @@ const getAllFarmers = async (req, res) => {
       return res.status(400).json({ message: "User ID is required" });
     }
 
-    // Pagination parameters
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
@@ -1136,8 +1135,6 @@ const getAllFarmers = async (req, res) => {
         .json({ message: "Only admin, manager, supervisor can access farmers" });
     }
 
-    // Build query based on role
-    // Admin can see all farmers, Manager and Supervisor can only see approved farmers
     const farmerQuery = { role: "farmer" };
     if (user_role === "manager" || user_role === "supervisor") {
       farmerQuery["farmerVerification.overallStatus"] = "approved";
@@ -1145,6 +1142,7 @@ const getAllFarmers = async (req, res) => {
 
     const allFarmers = await User.find(farmerQuery)
       .select("_id")
+      .sort({ createdAt: -1 })
       .lean();
     const farmerUserIds = allFarmers.map((f) => f._id);
 
@@ -1166,10 +1164,8 @@ const getAllFarmers = async (req, res) => {
       });
     }
 
-    // Apply pagination to farmer IDs
     const paginatedFarmerIds = farmerUserIds.slice(skip, skip + limit);
 
-    // Fetch farmer users with basic info (only required fields)
     const farmers = await User.find({
       _id: { $in: paginatedFarmerIds },
       role: "farmer",
